@@ -36,6 +36,32 @@
                #:bio-object
                #:bio-object-set
                #:members
+	       
+	       #:pdb-entry
+	       #:classification
+	       #:dep-date
+	       #:id-code
+	       #:obsolete
+	       #:title
+	       #:molecules
+	       #:chains
+	       #:atom-hash
+	       #:pdb-atom
+	       #:record-name
+	       #:atom-number
+	       #:atom-name
+	       #:alt-loc
+	       #:residue-name
+	       #:chain-id
+	       #:residue-seq-number
+	       #:insertation-code
+	       #:x-coord
+	       #:y-coord
+	       #:z-coord
+	       #:occupancy
+	       #:temp-factor
+	       #:element-symbol
+	       #:charge
                
                ;; ranges
                #:range
