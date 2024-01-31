@@ -46,6 +46,7 @@
 	       #:molecules
 	       #:chains
 	       #:atom-hash
+	       
 	       #:pdb-atom
 	       #:record-name
 	       #:atom-number
@@ -246,6 +247,8 @@
 
                #:read-fasta-sequences
                #:read-fasta-file
-               #:write-fasta-file))
+               #:write-fasta-file
+
+	       #:read-pdb-file))
 
 (defpackage #:bio-user (:use #:cl #:bio))
