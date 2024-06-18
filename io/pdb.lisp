@@ -103,7 +103,7 @@
                          :initform '(8 10))
    (field-columns :initarg :field-columns
                   :accessor field-columns
-                  :initform '(10 70))
+                  :initform '(10 80))
    (lines :initarg :lines :accessor lines :initform nil)
    (data :initarg :data :accessor data :initform nil))
   (:documentation "subclass of pdb-record for holding information
