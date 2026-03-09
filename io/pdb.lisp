@@ -58,10 +58,90 @@
 (defparameter *current-line* nil)
 (defparameter *current-entry* nil)
 
-(defun read-pdb-record-name (line)
-  "returns the first word of a given line."
-  (let ((strings (nth-value 1 (ppcre:scan-to-strings "^(\\w+)\\s*" (subseq line 0 6)))))
-    (when strings (elt strings 0))))
+(defvar *pdb-string-buffer* nil)
+
+(defun fast-pdb-symbol (string start end)
+  "Extracts a string from the line and returns it as a shared Keyword Symbol.
+   Never allocates a new string if the symbol already exists!"
+  (declare (type string string) (type fixnum start end)
+           (optimize (speed 3) (safety 0)))
+  
+  (let ((buf-idx 0))
+    (loop for i from start below end
+          for char = (char string i)
+          do (unless (char= char #\Space)
+               (setf (char *pdb-string-buffer* buf-idx) char)
+               (incf buf-idx)))
+    
+    (if (= buf-idx 0)
+        nil
+        (intern (subseq *pdb-string-buffer* 0 buf-idx) :keyword))))
+
+(declaim (inline strict-pdb-float))
+(defun strict-pdb-float (string start end)
+  "Parses a fixed-width PDB float, strictly rejecting malformed characters.
+   Returns NIL if the field is entirely blank, which is common for missing occupancies."
+  (declare (type string string) (type fixnum start end)
+           (optimize (speed 3) (safety 0)))
+  (let ((sign 1.0d0) 
+        (val 0.0d0) 
+        (dec-val 0.0d0) 
+        (dec-div 1.0d0) 
+        (in-dec nil)
+        (has-digits nil))
+    (loop for i from start below end
+          for char = (char string i)
+          do (cond
+               ((char= char #\Space) nil)
+               ((char= char #\-) (setf sign -1.0d0))
+               ((char= char #\+) (setf sign 1.0d0))
+               ((char= char #\.) (setf in-dec t))
+               (t 
+                (let ((code (char-code char)))
+                  (if (and (>= code 48) (<= code 57))
+                      (let ((digit (- code 48)))
+                        (setf has-digits t)
+                        (if in-dec
+                            (setf dec-val (+ (* dec-val 10.0d0) digit)
+                                  dec-div (* dec-div 10.0d0))
+                            (setf val (+ (* val 10.0d0) digit))))
+                      (error "Malformed PDB float at column ~D: Invalid character '~A' in string ~S" 
+                             i char (fast-pdb-symbol string start end)))))))
+    (when has-digits
+      (* sign (+ val (/ dec-val dec-div))))))
+
+(declaim (inline strict-pdb-int))
+(defun strict-pdb-int (string start end)
+  "Parses a fixed-width PDB integer, strictly returning a fixnum.
+   Rejects decimals and invalid characters."
+  (declare (type string string) (type fixnum start end)
+           (optimize (speed 3) (safety 0)))
+  (let ((sign 1)
+        (val 0)
+        (has-digits nil))
+    (declare (type fixnum sign val))
+    (loop for i from start below end
+          for char = (char string i)
+          do (cond
+               ((char= char #\Space) nil)
+               ((char= char #\-) (setf sign -1))
+               ((char= char #\+) (setf sign 1))
+               (t
+                (let ((code (char-code char)))
+                  (if (and (>= code 48) (<= code 57))
+                      (progn
+                        (setf has-digits t)
+                        (setf val (+ (* val 10) (- code 48))))
+                      (error "Malformed PDB integer at column ~D: Invalid character '~A' in string ~S" 
+                             i char (fast-pdb-symbol string start end)))))))
+    (when has-digits
+      (* sign val))))
+
+(defun read-pdb-record-name (string)
+  "Extracts the first 6 characters as a keyword, with zero consing and no regex."
+  (let ((len (length string)))
+    (when (> len 0)
+      (fast-pdb-symbol string 0 (min 6 len)))))
 
 (defclass pdb-entry ()
   ((classification :initarg :classification :accessor classification :initform nil)
@@ -123,14 +203,14 @@
 (defmethod read-continuation ((record continuable-pdb-record) line)
   (destructuring-bind (start end)
       (continuation-columns record)
-    (parse-integer (subseq line start end))))
+    (strict-pdb-int line start end)))
 
 (defmethod continue-pdb-record ((record continuable-pdb-record) line cont
                                 &key (entry *current-entry*))
   (declare (ignore entry))
   (destructuring-bind (start end)
       (field-columns record)
-    (let ((continuation-lines (subseq line (1+ start) end)))
+    (let ((continuation-lines (fast-pdb-symbol line (1+ start) end)))
       (push continuation-lines (lines record)))))
 
 (defmethod finish-pdb-record (record &key (entry *current-entry*))
@@ -152,9 +232,9 @@
 
 (defmethod start-pdb-record ((record-name (eql :header)) line
                            &key (entry *current-entry*))
-  (let ((classification (subseq line 10 50))
-        (dep-date (subseq line 50 59))
-        (id-code (subseq line 62 66)))
+  (let ((classification (fast-pdb-symbol line 10 50))
+        (dep-date (fast-pdb-symbol line 50 59))
+        (id-code (fast-pdb-symbol line 62 66)))
     (setf (classification entry)
           (remove-trailing-spaces classification))
     (setf (dep-date entry)
@@ -165,18 +245,18 @@
 
 (defmethod start-pdb-record ((record-name (eql :obslte)) line
                            &key (entry *current-entry*))
-  (let ((record-name (subseq line 0 6))
-        (continuation (subseq line 8 10))
-        (date (subseq line 11 20))
-        (id-code (subseq line 21 25))
-        (rid-code-1 (subseq line 31 35))
-        (rid-code-2 (subseq line 36 40))
-        (rid-code-3 (subseq line 41 45))
-        (rid-code-4 (subseq line 46 50))
-        (rid-code-5 (subseq line 51 55))
-        (rid-code-6 (subseq line 56 60))
-        (rid-code-7 (subseq line 61 65))
-        (rid-code-8 (subseq line 66 70)))))
+  (let ((record-name (fast-pdb-symbol line 0 6))
+        (continuation (fast-pdb-symbol line 8 10))
+        (date (fast-pdb-symbol line 11 20))
+        (id-code (fast-pdb-symbol line 21 25))
+        (rid-code-1 (fast-pdb-symbol line 31 35))
+        (rid-code-2 (fast-pdb-symbol line 36 40))
+        (rid-code-3 (fast-pdb-symbol line 41 45))
+        (rid-code-4 (fast-pdb-symbol line 46 50))
+        (rid-code-5 (fast-pdb-symbol line 51 55))
+        (rid-code-6 (fast-pdb-symbol line 56 60))
+        (rid-code-7 (fast-pdb-symbol line 61 65))
+        (rid-code-8 (fast-pdb-symbol line 66 70)))))
 
 (defclass pdb-title (continuable-pdb-record)
   ((record-name :initform "TITLE" :allocation :class)))
@@ -185,7 +265,7 @@
                           &key (entry *current-entry*))
   (declare (ignore entry))
   (let ((record (make-instance 'pdb-title)))
-    (setf (lines record) (list (apply #'subseq line (field-columns record))))
+    (setf (lines record) (list (apply #'fast-pdb-symbol line (field-columns record))))
     record))
 
 (defmethod finish-pdb-record ((record pdb-title) &key (entry *current-entry*))
@@ -220,28 +300,25 @@
                           &key (entry *current-entry*))
   (declare (ignore entry))
   (let ((record (make-instance 'pdb-compound)))
-    (setf (lines record) (list (apply #'subseq line (field-columns record))))
+    (setf (lines record) (list (apply #'fast-pdb-symbol line (field-columns record))))
     record))
 
 (defun parse-pdb-atom-record (record-class line entry)
-  (let ((record-name (remove-trailing-spaces (subseq line 0 6)))
-        (atom-number (parse-integer (subseq line 6 11)))
-        (atom-name (remove-trailing-spaces (subseq line 13 16)))
-        (alt-loc (subseq line 16 17))
-        (residue-name (subseq line 17 20))
-        (chain-id (remove-initial-spaces (subseq line 20 22)))
-        (residue-seq-number (parse-integer (subseq line 22 26)))
-        (insertion-code (subseq line 26 27))
-        (x-coord (parse-number:parse-real-number (subseq line 30 38)))
-        (y-coord (parse-number:parse-real-number (subseq line 38 46)))
-        (z-coord (parse-number:parse-real-number (subseq line 46 54)))
-        (occupancy (parse-number:parse-real-number (subseq line 54 60)))
-        (temp-factor (parse-number:parse-real-number (subseq line 60 66)))
-        (element-symbol (remove-initial-spaces (subseq line 76 78)))
-        (charge (let ((charge (remove-initial-spaces (subseq line 78 80))))
-                  (if (zerop (length charge))
-                      0
-                      (parse-integer charge)))))
+  (let ((record-name        (fast-pdb-symbol line 0 6))
+        (atom-number        (strict-pdb-int line 6 11))
+        (atom-name          (fast-pdb-symbol line 12 16))
+        (alt-loc            (fast-pdb-symbol line 16 17))
+        (residue-name       (fast-pdb-symbol line 17 20))
+        (chain-id           (fast-pdb-symbol line 21 22))
+        (residue-seq-number (strict-pdb-int line 22 26))
+        (insertion-code     (fast-pdb-symbol line 26 27))
+        (x-coord            (strict-pdb-float line 30 38))
+        (y-coord            (strict-pdb-float line 38 46))
+        (z-coord            (strict-pdb-float line 46 54))
+        (occupancy          (strict-pdb-float line 54 60))
+        (temp-factor        (strict-pdb-float line 60 66))
+        (element-symbol     (fast-pdb-symbol line 76 78))
+        (charge             (strict-pdb-int line 78 80)))
     (let ((atom (make-instance record-class
                                :record-name record-name 
                                :atom-number atom-number 
@@ -281,10 +358,10 @@
     (when colon-pos
       (let ((semicolon-pos (find-first-char #\; string
                                             :start colon-pos)))
-        (list (remove-initial-spaces (subseq string start colon-pos))
-              (remove-initial-spaces (subseq string (1+ colon-pos)
-                                             (or semicolon-pos
-                                                 (length string))))
+        (list (fast-pdb-symbol string start colon-pos)
+              (fast-pdb-symbol string (1+ colon-pos)
+                               (or semicolon-pos
+                                   (length string)))
               (if semicolon-pos (1+ semicolon-pos)
                   (length string)))))))
 
@@ -328,7 +405,7 @@
                           (string (string-upcase record-type))
                           (symbol (symbol-name record-type)))
                         (when (> line 1) line)
-                        (subseq data i end))))
+                        (fast-pdb-symbol data i end))))
      (incf i (if (zerop i)
                  line-length
                  (1- 59)))))
@@ -343,17 +420,19 @@
     :sheet :sigatm :siguij :site :ssbond :tvect :formul :hetatm :hetnam))
 
 (defun read-pdb-record (stream)
-  (let ((record (start-pdb-record
-                 (intern (read-pdb-record-name *current-line*) :keyword)
-                 *current-line*)))
+  (let* ((record-key (read-pdb-record-name *current-line*))
+         ;; No need to intern! It is already a keyword (e.g., :ATOM, :HEADER)
+         (record (when record-key 
+                   (start-pdb-record record-key *current-line*))))
     (if record
         (progn
           (if (continuable record)
               (loop for str = (setf *current-line* (read-line stream nil nil))
                  while str
                  do
-                 (if (equal (record-name record)
-                            (read-pdb-record-name str))
+                 ;; Use 'eq' for insanely fast keyword pointer comparison!
+                 (if (eq (record-name record)
+                         (read-pdb-record-name str))
                      (let ((cont (read-continuation record str)))
                        (if cont
                            (continue-pdb-record record str cont)
@@ -366,7 +445,8 @@
 (defun read-pdb-stream (stream)
   ;; bind *current-line* per thread to make this thread-safe
   (let ((*current-line* (read-line stream nil nil))
-        (*current-entry* (make-instance 'pdb-entry)))
+        (*current-entry* (make-instance 'pdb-entry))
+        (*pdb-string-buffer* (make-string 80 :initial-element #\Space)))
     (loop while *current-line*
        do (read-pdb-record stream))
     *current-entry*))
