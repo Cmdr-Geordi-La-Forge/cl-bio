@@ -65,22 +65,20 @@
    Never allocates a new string if the symbol already exists!"
   (declare (type string string) (type fixnum start end)
            (optimize (speed 3) (safety 0)))
-  
   (let ((buf-idx 0))
     (loop for i from start below end
           for char = (char string i)
           do (unless (char= char #\Space)
                (setf (char *pdb-string-buffer* buf-idx) char)
                (incf buf-idx)))
-    
     (if (= buf-idx 0)
         nil
         (intern (subseq *pdb-string-buffer* 0 buf-idx) :keyword))))
 
 (declaim (inline strict-pdb-float))
-(defun strict-pdb-float (string start end)
+(defun strict-pdb-float (string start end &optional default-value)
   "Parses a fixed-width PDB float, strictly rejecting malformed characters.
-   Returns NIL if the field is entirely blank, which is common for missing occupancies."
+   Returns DEFAULT-VALUE if the field is entirely blank."
   (declare (type string string) (type fixnum start end)
            (optimize (speed 3) (safety 0)))
   (let ((sign 1.0d0) 
@@ -107,8 +105,22 @@
                             (setf val (+ (* val 10.0d0) digit))))
                       (error "Malformed PDB float at column ~D: Invalid character '~A' in string ~S" 
                              i char (fast-pdb-symbol string start end)))))))
-    (when has-digits
-      (* sign (+ val (/ dec-val dec-div))))))
+    ;; Return the calculated float, or the fallback if it was completely blank
+    (if has-digits
+        (* sign (+ val (/ dec-val dec-div)))
+        default-value)))
+
+(declaim (inline strict-pdb-coord))
+(defun strict-pdb-coord (string start end)
+  "Parses a PDB float, but explicitly rejects missing/blank values with an error.
+   Used for X, Y, and Z coordinates which MUST exist."
+  (declare (type string string) (type fixnum start end)
+           (optimize (speed 3) (safety 0)))
+  (let ((val (strict-pdb-float string start end)))
+    (if val
+        val
+        (error "CRITICAL PARSE ERROR: Missing coordinate between columns ~D and ~D in string ~S" 
+               start end string))))
 
 (declaim (inline strict-pdb-int))
 (defun strict-pdb-int (string start end)
@@ -208,9 +220,12 @@
 (defmethod continue-pdb-record ((record continuable-pdb-record) line cont
                                 &key (entry *current-entry*))
   (declare (ignore entry))
-  (destructuring-bind (start end)
-      (field-columns record)
-    (let ((continuation-lines (fast-pdb-symbol line (1+ start) end)))
+  (destructuring-bind (start end) (field-columns record)
+    (let* ((len (length line))
+           ;; Safely bound both start and end
+           (actual-start (min (1+ start) len))
+           (actual-end (min end len))
+           (continuation-lines (subseq line actual-start actual-end)))
       (push continuation-lines (lines record)))))
 
 (defmethod finish-pdb-record (record &key (entry *current-entry*))
@@ -222,7 +237,8 @@
   (declare (ignore entry))
   (setf (data record)
         (apply #'concatenate 'string
-               (mapcar #'remove-trailing-spaces (nreverse (lines record)))))
+               (mapcar (lambda (s) (string-trim '(#\Space #\Tab) s)) 
+                       (nreverse (lines record)))))
   record)
 
 (defmethod start-pdb-record (record-name line &key (entry *current-entry*))
@@ -259,13 +275,17 @@
         (rid-code-8 (fast-pdb-symbol line 66 70)))))
 
 (defclass pdb-title (continuable-pdb-record)
-  ((record-name :initform "TITLE" :allocation :class)))
+  ((record-name :initform :TITLE :allocation :class)))
 
 (defmethod start-pdb-record ((record-name (eql :title)) line
                           &key (entry *current-entry*))
   (declare (ignore entry))
-  (let ((record (make-instance 'pdb-title)))
-    (setf (lines record) (list (apply #'fast-pdb-symbol line (field-columns record))))
+  (let* ((record (make-instance 'pdb-title))
+         (start (first (field-columns record)))
+         (end (second (field-columns record)))
+         (len (length line)))
+    ;; Bound the subseq to the actual length of the line
+    (setf (lines record) (list (subseq line (min start len) (min end len))))
     record))
 
 (defmethod finish-pdb-record ((record pdb-title) &key (entry *current-entry*))
@@ -273,38 +293,72 @@
   (setf (title entry)
         (data record)))
 
-(defclass pdb-atom (pdb-record)
-  ((record-name :initform "ATOM" :initarg :record-name :accessor record-name)
-   (atom-number :initarg :atom-number :accessor atom-number)
-   (atom-name :initarg :atom-name :accessor atom-name)
-   (alt-loc :initarg :alt-loc :accessor alt-loc)
-   (residue-name :initarg :residue-name :accessor residue-name)
-   (chain-id :initarg :chain-id :accessor chain-id)
-   (residue-seq-number :initarg :residue-seq-number :accessor residue-seq-number)
-   (insertion-code :initarg :insertion-code :accessor insertion-code)
-   (x-coord :initarg :x-coord :accessor x-coord)
-   (y-coord :initarg :y-coord :accessor y-coord)
-   (z-coord :initarg :z-coord :accessor z-coord)
-   (occupancy :initarg :occupancy :accessor occupancy)
-   (temp-factor :initarg :temp-factor :accessor temp-factor)
-   (element-symbol :initarg :element-symbol :accessor element-symbol)
-   (charge :initarg :charge :accessor charge)))
+(defstruct (pdb-atom (:conc-name nil) 
+                     (:constructor make-pdb-atom))
+  "A lightweight, statically-typed struct replacing the heavy CLOS atom classes."
+  rec-name        
+  (atom-number 0 :type fixnum) 
+  atom-name
+  alt-loc 
+  residue-name 
+  chain-id
+  (residue-seq-number 0 :type fixnum) 
+  insertion-code
+  (x-coord 0.0d0 :type double-float) 
+  (y-coord 0.0d0 :type double-float) 
+  (z-coord 0.0d0 :type double-float)
+  ;; Use (or type null) for optional fields that might return NIL
+  (occupancy 0.0d0 :type (or double-float null)) 
+  (temp-factor 0.0d0 :type (or double-float null))
+  element-symbol 
+  (charge 0 :type (or fixnum null)))
 
-(defclass pdb-hetero-atom (pdb-atom)
-  ((record-name :initform "HETATM" :initarg :record-name :accessor record-name)))
+;; Let the parser read the record name safely
+(defmethod record-name ((atom pdb-atom))
+  (rec-name atom))
+
+;; Atoms are never multi-line continuations!
+(defmethod continuable ((atom pdb-atom))
+  nil)
+
+;; When the parser finishes the line, just return the atom
+(defmethod finish-pdb-record ((atom pdb-atom) &key entry)
+  (declare (ignore entry))
+  atom)
 
 (defclass pdb-compound (continuable-pdb-record)
-  ((record-name :initform "COMPND" :allocation :class)))
+  ((record-name :initform :COMPND :allocation :class)))
 
 (defmethod start-pdb-record ((record-name (eql :compnd)) line
                           &key (entry *current-entry*))
   (declare (ignore entry))
-  (let ((record (make-instance 'pdb-compound)))
-    (setf (lines record) (list (apply #'fast-pdb-symbol line (field-columns record))))
+  (let* ((record (make-instance 'pdb-compound))
+         (start (first (field-columns record)))
+         (end (second (field-columns record)))
+         (len (length line)))
+    ;; Bound the subseq to the actual length of the line
+    (setf (lines record) (list (subseq line (min start len) (min end len))))
     record))
 
-(defun parse-pdb-atom-record (record-class line entry)
-  (let ((record-name        (fast-pdb-symbol line 0 6))
+(defclass pdb-remark (pdb-record)
+  ((remark-num :initarg :remark-num :accessor remark-num)
+   (text :initarg :text :accessor text)))
+
+(defmethod start-pdb-record ((record-name (eql :remark)) line
+                             &key (entry *current-entry*))
+  (declare (ignore entry))
+  (let* ((record (make-instance 'pdb-remark))
+         (len (length line)))
+    ;; Safely grab the remark number (columns 7-10)
+    (when (>= len 10)
+      (setf (remark-num record) (strict-pdb-int line 7 10)))
+    ;; Safely grab the text (columns 11-79)
+    (when (> len 11)
+      (setf (text record) (subseq line 11 (min 79 len))))
+    record))
+
+(defun parse-pdb-atom-record (line entry)
+  (let ((rec-name           (fast-pdb-symbol line 0 6))
         (atom-number        (strict-pdb-int line 6 11))
         (atom-name          (fast-pdb-symbol line 12 16))
         (alt-loc            (fast-pdb-symbol line 16 17))
@@ -312,15 +366,15 @@
         (chain-id           (fast-pdb-symbol line 21 22))
         (residue-seq-number (strict-pdb-int line 22 26))
         (insertion-code     (fast-pdb-symbol line 26 27))
-        (x-coord            (strict-pdb-float line 30 38))
-        (y-coord            (strict-pdb-float line 38 46))
-        (z-coord            (strict-pdb-float line 46 54))
+        (x-coord            (strict-pdb-coord line 30 38))
+        (y-coord            (strict-pdb-coord line 38 46))
+        (z-coord            (strict-pdb-coord line 46 54))
         (occupancy          (strict-pdb-float line 54 60))
         (temp-factor        (strict-pdb-float line 60 66))
         (element-symbol     (fast-pdb-symbol line 76 78))
         (charge             (strict-pdb-int line 78 80)))
-    (let ((atom (make-instance record-class
-                               :record-name record-name 
+        
+    (let ((atom (make-pdb-atom :rec-name rec-name 
                                :atom-number atom-number 
                                :atom-name atom-name
                                :alt-loc alt-loc 
@@ -335,16 +389,15 @@
                                :temp-factor temp-factor
                                :element-symbol element-symbol 
                                :charge charge)))
-      (setf (gethash atom-number (atom-hash entry))
-            atom))))
+      (setf (gethash atom-number (atom-hash entry)) atom))))
 
 (defmethod start-pdb-record ((record-name (eql :atom)) line
-                          &key (entry *current-entry*))
-  (parse-pdb-atom-record 'pdb-atom line entry))
+                             &key (entry *current-entry*))
+  (parse-pdb-atom-record line entry))
 
 (defmethod start-pdb-record ((record-name (eql :hetatm)) line
                              &key (entry *current-entry*))
-  (parse-pdb-atom-record 'pdb-hetero-atom line entry))
+  (parse-pdb-atom-record line entry))
 
 (defun find-first-char (char string &key (start 0) (escape-char #\\))
   (let ((pos (position char string :start start)))
@@ -353,25 +406,23 @@
                   (find-first-char char string :start (1+ pos) :escape-char escape-char)
                   pos))))
 
-(defun parse-specification (string &optional start)
-  (let ((colon-pos (find-first-char #\: string :start start)))
-    (when colon-pos
-      (let ((semicolon-pos (find-first-char #\; string
-                                            :start colon-pos)))
-        (list (fast-pdb-symbol string start colon-pos)
-              (fast-pdb-symbol string (1+ colon-pos)
-                               (or semicolon-pos
-                                   (length string)))
-              (if semicolon-pos (1+ semicolon-pos)
-                  (length string)))))))
+(defun parse-specification (string &optional (start 0))
+  (let ((colon (position #\: string :start start)))
+    (when colon
+      (cons 
+       (intern (string-trim '(#\Space #\Tab) (subseq string start colon)) :keyword)
+       (string-trim '(#\Space #\Tab) (subseq string (1+ colon)))))))
 
 (defun parse-specification-list (string)
-  (loop with next = 0
-     for (token value start) = (parse-specification string next)
-     then (parse-specification string start)
-     while token
-     collect
-       (cons token value)))
+  (let ((results nil))
+    (dolist (spec (cl-ppcre:split ";" string))
+      (let* ((clean-spec (string-trim '(#\Space #\Tab) spec))
+             (colon (position #\: clean-spec)))
+        (when colon
+          (let ((key (intern (string-trim '(#\Space #\Tab) (subseq clean-spec 0 colon)) :keyword))
+                (val (string-trim '(#\Space #\Tab) (subseq clean-spec (1+ colon)))))
+            (push (list key val) results)))))
+    (nreverse results)))
 
 (defmethod finish-pdb-record ((record pdb-compound) &key (entry *current-entry*))
   (declare (ignore entry))
@@ -421,7 +472,6 @@
 
 (defun read-pdb-record (stream)
   (let* ((record-key (read-pdb-record-name *current-line*))
-         ;; No need to intern! It is already a keyword (e.g., :ATOM, :HEADER)
          (record (when record-key 
                    (start-pdb-record record-key *current-line*))))
     (if record
@@ -430,7 +480,6 @@
               (loop for str = (setf *current-line* (read-line stream nil nil))
                  while str
                  do
-                 ;; Use 'eq' for insanely fast keyword pointer comparison!
                  (if (eq (record-name record)
                          (read-pdb-record-name str))
                      (let ((cont (read-continuation record str)))
