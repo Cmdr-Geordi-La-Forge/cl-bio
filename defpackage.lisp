@@ -46,6 +46,12 @@
 	       #:molecules
 	       #:chains
 	       #:atom-hash
+           #:sites
+           #:helices
+           #:sheets
+           #:ssbonds
+           #:links
+           #:cispeps
 	       
 	       #:pdb-atom
 	       #:record-name
