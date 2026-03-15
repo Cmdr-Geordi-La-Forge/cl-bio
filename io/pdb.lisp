@@ -57,8 +57,8 @@
 ;;; line so that we only need to read it once.
 (defparameter *current-line* nil)
 (defparameter *current-entry* nil)
-
 (defvar *pdb-string-buffer* nil)
+(declaim (special *current-line* *current-entry* *pdb-string-buffer*))
 
 (defun fast-pdb-symbol (string start end)
   "Extracts a string from the line and returns it as a shared Keyword Symbol.
@@ -360,39 +360,39 @@
       (setf (text record) (subseq line 11 (min 79 len))))
     record))
 
-(defstruct pdb-site
+(defstruct (pdb-site (:conc-name site-))
   (seq-num 0 :type fixnum) site-id (num-res 0 :type fixnum) residues)
 
-(defstruct pdb-helix
+(defstruct (pdb-helix (:conc-name helix-))
   (ser-num 0 :type fixnum) helix-id 
-  init-res-name init-chain (init-seq-num 0 :type fixnum) init-icode
-  end-res-name end-chain (end-seq-num 0 :type fixnum) end-icode
+  init-res-name init-chain-id (init-seq-num 0 :type fixnum) init-icode
+  end-res-name end-chain-id (end-seq-num 0 :type fixnum) end-icode
   (helix-class 0 :type fixnum) comment (length 0 :type (or fixnum null)))
 
-(defstruct pdb-sheet
+(defstruct (pdb-sheet (:conc-name sheet-))
   (strand 0 :type fixnum) sheet-id (num-strands 0 :type fixnum)
-  init-res-name init-chain (init-seq-num 0 :type fixnum) init-icode
-  end-res-name end-chain (end-seq-num 0 :type fixnum) end-icode
+  init-res-name init-chain-id (init-seq-num 0 :type fixnum) init-icode
+  end-res-name end-chain-id (end-seq-num 0 :type fixnum) end-icode
   (sense 0 :type fixnum)
-  cur-atom cur-res-name cur-chain (cur-res-seq 0 :type (or fixnum null)) cur-icode
-  prev-atom prev-res-name prev-chain (prev-res-seq 0 :type (or fixnum null)) prev-icode)
+  cur-atom cur-res-name cur-chain-id (cur-res-seq 0 :type (or fixnum null)) cur-icode
+  prev-atom prev-res-name prev-chain-id (prev-res-seq 0 :type (or fixnum null)) prev-icode)
 
-(defstruct pdb-cispep
+(defstruct (pdb-cispep (:conc-name cispep-))
   (ser-num 0 :type fixnum)
-  pep1 chain1 (seq-num1 0 :type fixnum) icode1
-  pep2 chain2 (seq-num2 0 :type fixnum) icode2
+  pep1 chain-id1 (seq-num1 0 :type fixnum) icode1
+  pep2 chain-id2 (seq-num2 0 :type fixnum) icode2
   (mod-num 0 :type (or fixnum null))
   (measure 0.0d0 :type (or double-float null)))
 
-(defstruct pdb-ssbond
+(defstruct (pdb-ssbond (:conc-name ssbond-))
   (ser-num 0 :type fixnum)
-  res-name1 chain1 (seq-num1 0 :type fixnum) icode1
-  res-name2 chain2 (seq-num2 0 :type fixnum) icode2
+  res-name1 chain-id1 (seq-num1 0 :type fixnum) icode1
+  res-name2 chain-id2 (seq-num2 0 :type fixnum) icode2
   sym1 sym2 (length 0.0d0 :type (or double-float null)))
 
-(defstruct pdb-link
-  atom1 alt1 res-name1 chain1 (seq-num1 0 :type fixnum) icode1
-  atom2 alt2 res-name2 chain2 (seq-num2 0 :type fixnum) icode2
+(defstruct (pdb-link (:conc-name link-))
+  atom1 alt-loc1 res-name1 chain-id1 (seq-num1 0 :type fixnum) icode1
+  atom2 alt-loc2 res-name2 chain-id2 (seq-num2 0 :type fixnum) icode2
   sym1 sym2 (length 0.0d0 :type (or double-float null)))
 
 (defun parse-pdb-atom-record (line entry)
@@ -429,13 +429,13 @@
                                :charge charge)))
       (setf (gethash atom-number (atom-hash entry)) atom))))
 
-(defmethod start-pdb-record ((record-name (eql :atom)) line
-                             &key (entry *current-entry*))
-  (parse-pdb-atom-record line entry))
+(defmethod start-pdb-record ((record-name (eql :atom)) line &key (entry *current-entry*))
+  (parse-pdb-atom-record line entry)
+  nil)
 
-(defmethod start-pdb-record ((record-name (eql :hetatm)) line
-                             &key (entry *current-entry*))
-  (parse-pdb-atom-record line entry))
+(defmethod start-pdb-record ((record-name (eql :hetatm)) line &key (entry *current-entry*))
+  (parse-pdb-atom-record line entry)
+  nil)
 
 ;; --- SITE ---
 (defmethod start-pdb-record ((record-name (eql :site)) line &key (entry *current-entry*))
@@ -460,45 +460,45 @@
 ;; --- HELIX ---
 (defmethod start-pdb-record ((record-name (eql :helix)) line &key (entry *current-entry*))
   (push (make-pdb-helix
-         :ser-num      (strict-pdb-int line 7 10)     :helix-id     (fast-pdb-symbol line 11 14)
-         :init-res-name (fast-pdb-symbol line 15 18)  :init-chain   (fast-pdb-symbol line 19 20)
-         :init-seq-num (strict-pdb-int line 21 25)    :init-icode   (fast-pdb-symbol line 25 26)
-         :end-res-name (fast-pdb-symbol line 27 30)   :end-chain    (fast-pdb-symbol line 31 32)
-         :end-seq-num  (strict-pdb-int line 33 37)    :end-icode    (fast-pdb-symbol line 37 38)
-         :helix-class  (strict-pdb-int line 38 40)
-         :comment      (string-trim '(#\Space) (subseq line 40 (min 70 (length line))))
-         :length       (strict-pdb-int line 71 76))
+         :ser-num       (strict-pdb-int line 7 10)     :helix-id      (fast-pdb-symbol line 11 14)
+         :init-res-name (fast-pdb-symbol line 15 18)   :init-chain-id (fast-pdb-symbol line 19 20)
+         :init-seq-num  (strict-pdb-int line 21 25)    :init-icode    (fast-pdb-symbol line 25 26)
+         :end-res-name  (fast-pdb-symbol line 27 30)   :end-chain-id  (fast-pdb-symbol line 31 32)
+         :end-seq-num   (strict-pdb-int line 33 37)    :end-icode     (fast-pdb-symbol line 37 38)
+         :helix-class   (strict-pdb-int line 38 40)
+         :comment       (string-trim '(#\Space) (subseq line 40 (min 70 (length line))))
+         :length        (strict-pdb-int line 71 76))
         (helices entry))
   nil)
 
 ;; --- SHEET ---
 (defmethod start-pdb-record ((record-name (eql :sheet)) line &key (entry *current-entry*))
   (push (make-pdb-sheet
-         :strand       (strict-pdb-int line 7 10)     :sheet-id     (fast-pdb-symbol line 11 14)
-         :num-strands  (strict-pdb-int line 14 16)
-         :init-res-name (fast-pdb-symbol line 17 20)  :init-chain   (fast-pdb-symbol line 21 22)
-         :init-seq-num (strict-pdb-int line 22 26)    :init-icode   (fast-pdb-symbol line 26 27)
-         :end-res-name (fast-pdb-symbol line 28 31)   :end-chain    (fast-pdb-symbol line 32 33)
-         :end-seq-num  (strict-pdb-int line 33 37)    :end-icode    (fast-pdb-symbol line 37 38)
-         :sense        (strict-pdb-int line 38 40)
-         :cur-atom     (fast-pdb-symbol line 41 45)   :cur-res-name (fast-pdb-symbol line 45 48)
-         :cur-chain    (fast-pdb-symbol line 49 50)   :cur-res-seq  (strict-pdb-int line 50 54)
-         :cur-icode    (fast-pdb-symbol line 54 55)
-         :prev-atom    (fast-pdb-symbol line 56 60)   :prev-res-name (fast-pdb-symbol line 60 63)
-         :prev-chain   (fast-pdb-symbol line 64 65)   :prev-res-seq (strict-pdb-int line 65 69)
-         :prev-icode   (fast-pdb-symbol line 69 70))
+         :strand        (strict-pdb-int line 7 10)     :sheet-id      (fast-pdb-symbol line 11 14)
+         :num-strands   (strict-pdb-int line 14 16)
+         :init-res-name (fast-pdb-symbol line 17 20)   :init-chain-id (fast-pdb-symbol line 21 22)
+         :init-seq-num  (strict-pdb-int line 22 26)    :init-icode    (fast-pdb-symbol line 26 27)
+         :end-res-name  (fast-pdb-symbol line 28 31)   :end-chain-id  (fast-pdb-symbol line 32 33)
+         :end-seq-num   (strict-pdb-int line 33 37)    :end-icode     (fast-pdb-symbol line 37 38)
+         :sense         (strict-pdb-int line 38 40)
+         :cur-atom      (fast-pdb-symbol line 41 45)   :cur-res-name  (fast-pdb-symbol line 45 48)
+         :cur-chain-id  (fast-pdb-symbol line 49 50)   :cur-res-seq   (strict-pdb-int line 50 54)
+         :cur-icode     (fast-pdb-symbol line 54 55)
+         :prev-atom     (fast-pdb-symbol line 56 60)   :prev-res-name (fast-pdb-symbol line 60 63)
+         :prev-chain-id (fast-pdb-symbol line 64 65)   :prev-res-seq  (strict-pdb-int line 65 69)
+         :prev-icode    (fast-pdb-symbol line 69 70))
         (sheets entry))
   nil)
 
 ;; --- CISPEP ---
 (defmethod start-pdb-record ((record-name (eql :cispep)) line &key (entry *current-entry*))
   (push (make-pdb-cispep
-         :ser-num  (strict-pdb-int line 7 10)
-         :pep1     (fast-pdb-symbol line 11 14) :chain1   (fast-pdb-symbol line 15 16)
-         :seq-num1 (strict-pdb-int line 17 21)  :icode1   (fast-pdb-symbol line 21 22)
-         :pep2     (fast-pdb-symbol line 25 28) :chain2   (fast-pdb-symbol line 29 30)
-         :seq-num2 (strict-pdb-int line 31 35)  :icode2   (fast-pdb-symbol line 35 36)
-         :mod-num  (strict-pdb-int line 43 46)  :measure  (strict-pdb-float line 53 59))
+         :ser-num   (strict-pdb-int line 7 10)
+         :pep1      (fast-pdb-symbol line 11 14) :chain-id1 (fast-pdb-symbol line 15 16)
+         :seq-num1  (strict-pdb-int line 17 21)  :icode1    (fast-pdb-symbol line 21 22)
+         :pep2      (fast-pdb-symbol line 25 28) :chain-id2 (fast-pdb-symbol line 29 30)
+         :seq-num2  (strict-pdb-int line 31 35)  :icode2    (fast-pdb-symbol line 35 36)
+         :mod-num   (strict-pdb-int line 43 46)  :measure   (strict-pdb-float line 53 59))
         (cispeps entry))
   nil)
 
@@ -506,10 +506,10 @@
 (defmethod start-pdb-record ((record-name (eql :ssbond)) line &key (entry *current-entry*))
   (push (make-pdb-ssbond
          :ser-num   (strict-pdb-int line 7 10)
-         :res-name1 (fast-pdb-symbol line 11 14) :chain1   (fast-pdb-symbol line 15 16)
-         :seq-num1  (strict-pdb-int line 17 21)  :icode1   (fast-pdb-symbol line 21 22)
-         :res-name2 (fast-pdb-symbol line 25 28) :chain2   (fast-pdb-symbol line 29 30)
-         :seq-num2  (strict-pdb-int line 31 35)  :icode2   (fast-pdb-symbol line 35 36)
+         :res-name1 (fast-pdb-symbol line 11 14) :chain-id1 (fast-pdb-symbol line 15 16)
+         :seq-num1  (strict-pdb-int line 17 21)  :icode1    (fast-pdb-symbol line 21 22)
+         :res-name2 (fast-pdb-symbol line 25 28) :chain-id2 (fast-pdb-symbol line 29 30)
+         :seq-num2  (strict-pdb-int line 31 35)  :icode2    (fast-pdb-symbol line 35 36)
          :sym1      (string-trim '(#\Space) (subseq line 59 65))
          :sym2      (string-trim '(#\Space) (subseq line 66 72))
          :length    (strict-pdb-float line 73 78))
@@ -519,11 +519,11 @@
 ;; --- LINK ---
 (defmethod start-pdb-record ((record-name (eql :link)) line &key (entry *current-entry*))
   (push (make-pdb-link
-         :atom1     (fast-pdb-symbol line 12 16) :alt1      (fast-pdb-symbol line 16 17)
-         :res-name1 (fast-pdb-symbol line 17 20) :chain1    (fast-pdb-symbol line 21 22)
+         :atom1     (fast-pdb-symbol line 12 16) :alt-loc1  (fast-pdb-symbol line 16 17)
+         :res-name1 (fast-pdb-symbol line 17 20) :chain-id1 (fast-pdb-symbol line 21 22)
          :seq-num1  (strict-pdb-int line 22 26)  :icode1    (fast-pdb-symbol line 26 27)
-         :atom2     (fast-pdb-symbol line 42 46) :alt2      (fast-pdb-symbol line 46 47)
-         :res-name2 (fast-pdb-symbol line 47 50) :chain2    (fast-pdb-symbol line 51 52)
+         :atom2     (fast-pdb-symbol line 42 46) :alt-loc2  (fast-pdb-symbol line 46 47)
+         :res-name2 (fast-pdb-symbol line 47 50) :chain-id2 (fast-pdb-symbol line 51 52)
          :seq-num2  (strict-pdb-int line 52 56)  :icode2    (fast-pdb-symbol line 56 57)
          :sym1      (string-trim '(#\Space) (subseq line 59 65))
          :sym2      (string-trim '(#\Space) (subseq line 66 72))
@@ -630,7 +630,6 @@
         (*pdb-string-buffer* (make-string 80 :initial-element #\Space)))
     (loop while *current-line*
           do (read-pdb-record stream))
-    (resolve-links *current-entry* *deferred-links*)
     *current-entry*))
 
 (defun read-pdb-file (file)

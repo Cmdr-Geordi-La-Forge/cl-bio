@@ -46,12 +46,6 @@
 	       #:molecules
 	       #:chains
 	       #:atom-hash
-           #:sites
-           #:helices
-           #:sheets
-           #:ssbonds
-           #:links
-           #:cispeps
 	       
 	       #:pdb-atom
 	       #:record-name
@@ -61,7 +55,7 @@
 	       #:residue-name
 	       #:chain-id
 	       #:residue-seq-number
-	       #:insertation-code
+	       #:insertion-code
 	       #:x-coord
 	       #:y-coord
 	       #:z-coord
@@ -69,6 +63,57 @@
 	       #:temp-factor
 	       #:element-symbol
 	       #:charge
+           
+           ;; -----------------------------------------------------------------
+           ;; PDB-ENTRY TOPOLOGY LISTS
+           ;; -----------------------------------------------------------------
+           #:sites #:helices #:sheets #:cispeps #:ssbonds #:links
+
+           ;; -----------------------------------------------------------------
+           ;; SITE ACCESSORS
+           ;; -----------------------------------------------------------------
+           #:site-seq-num #:site-site-id #:site-num-res #:site-residues
+
+           ;; -----------------------------------------------------------------
+           ;; HELIX ACCESSORS
+           ;; -----------------------------------------------------------------
+           #:helix-ser-num #:helix-helix-id 
+           #:helix-init-res-name #:helix-init-chain-id #:helix-init-seq-num #:helix-init-icode
+           #:helix-end-res-name #:helix-end-chain-id #:helix-end-seq-num #:helix-end-icode
+           #:helix-helix-class #:helix-comment #:helix-length
+
+           ;; -----------------------------------------------------------------
+           ;; SHEET ACCESSORS
+           ;; -----------------------------------------------------------------
+           #:sheet-strand #:sheet-sheet-id #:sheet-num-strands
+           #:sheet-init-res-name #:sheet-init-chain-id #:sheet-init-seq-num #:sheet-init-icode
+           #:sheet-end-res-name #:sheet-end-chain-id #:sheet-end-seq-num #:sheet-end-icode
+           #:sheet-sense
+           #:sheet-cur-atom #:sheet-cur-res-name #:sheet-cur-chain-id #:sheet-cur-res-seq #:sheet-cur-icode
+           #:sheet-prev-atom #:sheet-prev-res-name #:sheet-prev-chain-id #:sheet-prev-res-seq #:sheet-prev-icode
+
+           ;; -----------------------------------------------------------------
+           ;; SSBOND ACCESSORS
+           ;; -----------------------------------------------------------------
+           #:ssbond-ser-num
+           #:ssbond-res-name1 #:ssbond-chain-id1 #:ssbond-seq-num1 #:ssbond-icode1
+           #:ssbond-res-name2 #:ssbond-chain-id2 #:ssbond-seq-num2 #:ssbond-icode2
+           #:ssbond-sym1 #:ssbond-sym2 #:ssbond-length
+
+           ;; -----------------------------------------------------------------
+           ;; LINK ACCESSORS
+           ;; -----------------------------------------------------------------
+           #:link-atom1 #:link-alt-loc1 #:link-res-name1 #:link-chain-id1 #:link-seq-num1 #:link-icode1
+           #:link-atom2 #:link-alt-loc2 #:link-res-name2 #:link-chain-id2 #:link-seq-num2 #:link-icode2
+           #:link-sym1 #:link-sym2 #:link-length
+
+           ;; -----------------------------------------------------------------
+           ;; CISPEP ACCESSORS
+           ;; -----------------------------------------------------------------
+           #:cispep-ser-num
+           #:cispep-pep1 #:cispep-chain-id1 #:cispep-seq-num1 #:cispep-icode1
+           #:cispep-pep2 #:cispep-chain-id2 #:cispep-seq-num2 #:cispep-icode2
+           #:cispep-mod-num #:cispep-measure
                
                ;; ranges
                #:range
