@@ -38,6 +38,7 @@
                #:members
 	       
 	       #:pdb-entry
+           #:cif-metadata
 	       #:classification
 	       #:dep-date
 	       #:id-code
@@ -300,6 +301,8 @@
                #:read-fasta-file
                #:write-fasta-file
 
-	       #:read-pdb-file))
-
+	       #:read-pdb-file
+           #:read-cif-file
+           #:struct-conns))
+           
 (defpackage #:bio-user (:use #:cl #:bio))

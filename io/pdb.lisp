@@ -60,95 +60,6 @@
 (defvar *pdb-string-buffer* nil)
 (declaim (special *current-line* *current-entry* *pdb-string-buffer*))
 
-(defun fast-pdb-symbol (string start end)
-  "Extracts a string from the line and returns it as a shared Keyword Symbol.
-   Never allocates a new string if the symbol already exists!"
-  (declare (type string string) (type fixnum start end)
-           (optimize (speed 3) (safety 0)))
-  (let ((buf-idx 0))
-    (loop for i from start below end
-          for char = (char string i)
-          do (unless (char= char #\Space)
-               (setf (char *pdb-string-buffer* buf-idx) char)
-               (incf buf-idx)))
-    (if (= buf-idx 0)
-        nil
-        (intern (subseq *pdb-string-buffer* 0 buf-idx) :keyword))))
-
-(declaim (inline strict-pdb-float))
-(defun strict-pdb-float (string start end &optional default-value)
-  "Parses a fixed-width PDB float, strictly rejecting malformed characters.
-   Returns DEFAULT-VALUE if the field is entirely blank."
-  (declare (type string string) (type fixnum start end)
-           (optimize (speed 3) (safety 0)))
-  (let ((sign 1.0d0) 
-        (val 0.0d0) 
-        (dec-val 0.0d0) 
-        (dec-div 1.0d0) 
-        (in-dec nil)
-        (has-digits nil))
-    (loop for i from start below end
-          for char = (char string i)
-          do (cond
-               ((char= char #\Space) nil)
-               ((char= char #\-) (setf sign -1.0d0))
-               ((char= char #\+) (setf sign 1.0d0))
-               ((char= char #\.) (setf in-dec t))
-               (t 
-                (let ((code (char-code char)))
-                  (if (and (>= code 48) (<= code 57))
-                      (let ((digit (- code 48)))
-                        (setf has-digits t)
-                        (if in-dec
-                            (setf dec-val (+ (* dec-val 10.0d0) digit)
-                                  dec-div (* dec-div 10.0d0))
-                            (setf val (+ (* val 10.0d0) digit))))
-                      (error "Malformed PDB float at column ~D: Invalid character '~A' in string ~S" 
-                             i char (fast-pdb-symbol string start end)))))))
-    ;; Return the calculated float, or the fallback if it was completely blank
-    (if has-digits
-        (* sign (+ val (/ dec-val dec-div)))
-        default-value)))
-
-(declaim (inline strict-pdb-coord))
-(defun strict-pdb-coord (string start end)
-  "Parses a PDB float, but explicitly rejects missing/blank values with an error.
-   Used for X, Y, and Z coordinates which MUST exist."
-  (declare (type string string) (type fixnum start end)
-           (optimize (speed 3) (safety 0)))
-  (let ((val (strict-pdb-float string start end)))
-    (if val
-        val
-        (error "CRITICAL PARSE ERROR: Missing coordinate between columns ~D and ~D in string ~S" 
-               start end string))))
-
-(declaim (inline strict-pdb-int))
-(defun strict-pdb-int (string start end)
-  "Parses a fixed-width PDB integer, strictly returning a fixnum.
-   Rejects decimals and invalid characters."
-  (declare (type string string) (type fixnum start end)
-           (optimize (speed 3) (safety 0)))
-  (let ((sign 1)
-        (val 0)
-        (has-digits nil))
-    (declare (type fixnum sign val))
-    (loop for i from start below end
-          for char = (char string i)
-          do (cond
-               ((char= char #\Space) nil)
-               ((char= char #\-) (setf sign -1))
-               ((char= char #\+) (setf sign 1))
-               (t
-                (let ((code (char-code char)))
-                  (if (and (>= code 48) (<= code 57))
-                      (progn
-                        (setf has-digits t)
-                        (setf val (+ (* val 10) (- code 48))))
-                      (error "Malformed PDB integer at column ~D: Invalid character '~A' in string ~S" 
-                             i char (fast-pdb-symbol string start end)))))))
-    (when has-digits
-      (* sign val))))
-
 (defun read-pdb-record-name (string)
   "Extracts the first 6 characters as a keyword, with zero consing and no regex."
   (let ((len (length string)))
@@ -164,58 +75,6 @@
   "Generates a list of residue cons cells from start to end."
   (loop for seq from start-seq to end-seq
         collect (make-resi-id chain seq)))
-
-(defclass pdb-entry ()
-  ((classification :initarg :classification :accessor classification :initform nil)
-   (dep-date :initarg :dep-date :accessor dep-date :initform nil)
-   (id-code :initarg :id-code :accessor id-code :initform nil)
-   (obsolete :initarg :obsolete :accessor obsolete :initform nil)
-   (title :initarg :title :accessor title :initform nil)
-   (molecules :initarg :molecules :accessor molecules :initform nil)
-   (chains :initarg :chains :accessor chains :initform nil)
-   (atom-hash :initarg :atom-hash :accessor atom-hash :initform (make-hash-table))
-   (sites :initarg :sites :accessor sites :initform nil)
-   (helices :initarg :helices :accessor helices :initform nil)
-   (sheets :initarg :sheets :accessor sheets :initform nil)
-   (cispeps :initarg :cispeps :accessor cispeps :initform nil)
-   (ssbonds :initarg :ssbonds :accessor ssbonds :initform nil)
-   (links :initarg :links :accessor links :initform nil)))
-
-(defclass pdb-molecule ()
-  ((id :initarg :id :accessor :id)
-   (name :initarg :name :accessor name)
-   (chains :initarg :chains :accessor chains)
-   (fragments :initarg :fragments :accessor fragments)
-   (synonym :initarg :synonym :accessor synonym)
-   (ec :initarg :ec :accessor ec)
-   (engineered :initarg :engineered :accessor engineered)
-   (mutation :initarg :mutation :accessor mutation)
-   (other-details :initarg :other-details :accessor other-details)))
-
-(defclass pdb-chain ()
-  ((name :initarg :name :accessor name)
-   (sequence :initarg :sequence :accessor chain-sequence)))
-
-(defclass pdb-record ()
-  ((record-name :reader record-name :allocation class)
-   (continuable :initarg :continuable :accessor continuable
-                :initform nil))
-  (:documentation "class for holding information about pdb-records
-  while parsing PDB files."))
-
-(defclass continuable-pdb-record (pdb-record)
-  ((continuable :initarg :continuable :accessor continuable
-                :initform t)
-   (continuation-columns :initarg :continuation-columns
-                         :accessor continuation-columns
-                         :initform '(8 10))
-   (field-columns :initarg :field-columns
-                  :accessor field-columns
-                  :initform '(10 80))
-   (lines :initarg :lines :accessor lines :initform nil)
-   (data :initarg :data :accessor data :initform nil))
-  (:documentation "subclass of pdb-record for holding information
-  about contiuable pdb-records for use while parsing PDB files."))
 
 (defgeneric start-pdb-record (record-name line &key entry)
   (:documentation "Reads the first line of a PDB record"))
@@ -309,29 +168,6 @@
   (setf (title entry)
         (data record)))
 
-(defstruct (pdb-atom (:conc-name nil) 
-                     (:constructor make-pdb-atom))
-  "A lightweight, statically-typed struct replacing the heavy CLOS atom classes."
-  rec-name        
-  (atom-number 0 :type fixnum) 
-  atom-name
-  alt-loc 
-  residue-name 
-  chain-id
-  (residue-seq-number 0 :type fixnum) 
-  insertion-code
-  (x-coord 0.0d0 :type double-float) 
-  (y-coord 0.0d0 :type double-float) 
-  (z-coord 0.0d0 :type double-float)
-  ;; Use (or type null) for optional fields that might return NIL
-  (occupancy 0.0d0 :type (or double-float null)) 
-  (temp-factor 0.0d0 :type (or double-float null))
-  element-symbol 
-  (charge 0 :type (or fixnum null)))
-
-(defclass pdb-compound (continuable-pdb-record)
-  ((record-name :initform :COMPND :allocation :class)))
-
 (defmethod start-pdb-record ((record-name (eql :compnd)) line
                           &key (entry *current-entry*))
   (declare (ignore entry))
@@ -359,41 +195,6 @@
     (when (> len 11)
       (setf (text record) (subseq line 11 (min 79 len))))
     record))
-
-(defstruct (pdb-site (:conc-name site-))
-  (seq-num 0 :type fixnum) site-id (num-res 0 :type fixnum) residues)
-
-(defstruct (pdb-helix (:conc-name helix-))
-  (ser-num 0 :type fixnum) helix-id 
-  init-res-name init-chain-id (init-seq-num 0 :type fixnum) init-icode
-  end-res-name end-chain-id (end-seq-num 0 :type fixnum) end-icode
-  (helix-class 0 :type fixnum) comment (length 0 :type (or fixnum null)))
-
-(defstruct (pdb-sheet (:conc-name sheet-))
-  (strand 0 :type fixnum) sheet-id (num-strands 0 :type fixnum)
-  init-res-name init-chain-id (init-seq-num 0 :type fixnum) init-icode
-  end-res-name end-chain-id (end-seq-num 0 :type fixnum) end-icode
-  (sense 0 :type fixnum)
-  cur-atom cur-res-name cur-chain-id (cur-res-seq 0 :type (or fixnum null)) cur-icode
-  prev-atom prev-res-name prev-chain-id (prev-res-seq 0 :type (or fixnum null)) prev-icode)
-
-(defstruct (pdb-cispep (:conc-name cispep-))
-  (ser-num 0 :type fixnum)
-  pep1 chain-id1 (seq-num1 0 :type fixnum) icode1
-  pep2 chain-id2 (seq-num2 0 :type fixnum) icode2
-  (mod-num 0 :type (or fixnum null))
-  (measure 0.0d0 :type (or double-float null)))
-
-(defstruct (pdb-ssbond (:conc-name ssbond-))
-  (ser-num 0 :type fixnum)
-  res-name1 chain-id1 (seq-num1 0 :type fixnum) icode1
-  res-name2 chain-id2 (seq-num2 0 :type fixnum) icode2
-  sym1 sym2 (length 0.0d0 :type (or double-float null)))
-
-(defstruct (pdb-link (:conc-name link-))
-  atom1 alt-loc1 res-name1 chain-id1 (seq-num1 0 :type fixnum) icode1
-  atom2 alt-loc2 res-name2 chain-id2 (seq-num2 0 :type fixnum) icode2
-  sym1 sym2 (length 0.0d0 :type (or double-float null)))
 
 (defun parse-pdb-atom-record (line entry)
   (let ((rec-name           (fast-pdb-symbol line 0 6))
