@@ -38,6 +38,7 @@
                #:members
 	       
 	       #:pdb-entry
+           #:cif-metadata
 	       #:classification
 	       #:dep-date
 	       #:id-code
@@ -302,6 +303,12 @@
                #:write-fasta-file
 
 	       #:read-pdb-file
+<<<<<<< HEAD
            #:read-pdb-stream))
 
+=======
+           #:read-cif-file
+           #:struct-conns))
+           
+>>>>>>> origin/master
 (defpackage #:bio-user (:use #:cl #:bio))
