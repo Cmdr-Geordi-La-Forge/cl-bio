@@ -171,6 +171,7 @@
    (id-code :initarg :id-code :accessor id-code :initform nil)
    (obsolete :initarg :obsolete :accessor obsolete :initform nil)
    (title :initarg :title :accessor title :initform nil)
+   (resolution :initarg :resolution :accessor resolution :initform nil)
    (molecules :initarg :molecules :accessor molecules :initform nil)
    (chains :initarg :chains :accessor chains :initform nil)
    (atom-hash :initarg :atom-hash :accessor atom-hash :initform (make-hash-table))
@@ -347,17 +348,31 @@
   ((remark-num :initarg :remark-num :accessor remark-num)
    (text :initarg :text :accessor text)))
 
-(defmethod start-pdb-record ((record-name (eql :remark)) line
-                             &key (entry *current-entry*))
-  (declare (ignore entry))
+(defmethod start-pdb-record ((record-name (eql :remark)) line &key (entry *current-entry*))
+  ;; Remove (declare (ignore entry)) because we need the entry now!
   (let* ((record (make-instance 'pdb-remark))
          (len (length line)))
+    
     ;; Safely grab the remark number (columns 7-10)
     (when (>= len 10)
       (setf (remark-num record) (strict-pdb-int line 7 10)))
+      
     ;; Safely grab the text (columns 11-79)
     (when (> len 11)
       (setf (text record) (subseq line 11 (min 79 len))))
+
+    ;; --- NEW: Catch REMARK 2 and extract the resolution ---
+    ;; Check the accessor (remark-num record) directly to avoid unbound variable errors
+    (when (and (eql (remark-num record) 2) (> len 22))
+      (let ((text-part (subseq line 11 (min 23 len))))
+        (when (search "RESOLUTION." text-part)
+          ;; The resolution float is typically in columns 23-30 (0-indexed 22-30)
+          (handler-case
+              (let ((res-val (strict-pdb-float line 22 (min 30 len))))
+                (when res-val
+                  (setf (resolution entry) res-val)))
+            (error () nil))))) ;; Silently ignore "NOT APPLICABLE"
+
     record))
 
 (defstruct (pdb-site (:conc-name site-))

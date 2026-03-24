@@ -43,6 +43,7 @@
 	       #:id-code
 	       #:obsolete
 	       #:title
+           #:resolution
 	       #:molecules
 	       #:chains
 	       #:atom-hash
@@ -300,6 +301,7 @@
                #:read-fasta-file
                #:write-fasta-file
 
-	       #:read-pdb-file))
+	       #:read-pdb-file
+           #:read-pdb-stream))
 
 (defpackage #:bio-user (:use #:cl #:bio))
