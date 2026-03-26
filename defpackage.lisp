@@ -303,12 +303,11 @@
                #:write-fasta-file
 
 	       #:read-pdb-file
-<<<<<<< HEAD
-           #:read-pdb-stream))
+           #:read-pdb-stream
 
-=======
            #:read-cif-file
+           #:read-cif-stream
+           #:parse-cif-atoms-fast
            #:struct-conns))
            
->>>>>>> origin/master
 (defpackage #:bio-user (:use #:cl #:bio))

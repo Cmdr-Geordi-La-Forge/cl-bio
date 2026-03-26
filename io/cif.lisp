@@ -588,9 +588,9 @@
 (defun read-cif-stream (stream &key (populate-legacy t))
   "The streamlined state machine: fast-paths atoms, dynamically catches everything else,
    and optionally populates legacy structures."
-  (let ((*cif-buffer* (make-array 1024 :element-type 'character :adjustable t :fill-pointer 0))
-        (entry (make-instance 'pdb-entry)) 
-        (current-token (get-cif-token stream nil nil)))
+  (let* ((*cif-buffer* (make-array 1024 :element-type 'character :adjustable t :fill-pointer 0))
+         (entry (make-instance 'pdb-entry)) 
+         (current-token (get-cif-token stream nil nil)))
     
     (loop while (and current-token (not (eq (car current-token) :EOF)))
           do (case (car current-token)
@@ -671,17 +671,17 @@
         (atom-count 0))
     
     (with-open-file (stream file-path :direction :input)
-      (let ((token (bio::get-cif-token stream nil nil)))
+      (let ((token (get-cif-token stream nil nil)))
         
         (loop while (and token (not (eq (car token) :EOF)))
               do (case (car token)
                    
                    (:LOOP
                     (let ((headers nil))
-                      (setf token (bio::get-cif-token stream nil nil))
+                      (setf token (get-cif-token stream nil nil))
                       (loop while (eq (car token) :TAG)
                             do (push (cdr token) headers)
-                               (setf token (bio::get-cif-token stream nil nil)))
+                               (setf token (get-cif-token stream nil nil)))
                       (setf headers (nreverse headers))
                       
                       ;; TARGET ACQUIRED: Is this the atom_site loop?
@@ -714,7 +714,7 @@
                                   do (let ((row (make-array h-len)))
                                        (loop for i from 0 below h-len
                                              do (setf (aref row i) (fast-cif-trim *cif-trim-bag* (cdr token)))
-                                                (setf token (bio::get-cif-token stream nil nil)))
+                                                (setf token (get-cif-token stream nil nil)))
                                        
                                        ;; High-speed inline data validation and struct initialization
                                        (macrolet ((get-val (idx)
@@ -748,10 +748,10 @@
                           
                           ;; --- NOT ATOMS: FAST FORWARD ---
                           (loop while (eq (car token) :VALUE)
-                                do (setf token (bio::get-cif-token stream nil nil))))))
+                                do (setf token (get-cif-token stream nil nil))))))
                    
                    ;; Ignore flat tags and saves
-                   (t (setf token (bio::get-cif-token stream nil nil)))))))
+                   (t (setf token (get-cif-token stream nil nil)))))))
     
     (format t "-> Fast-tracked ~D atoms directly to hash!~%" atom-count)
     atoms))

@@ -76,62 +76,6 @@
   (loop for seq from start-seq to end-seq
         collect (make-resi-id chain seq)))
 
-<<<<<<< HEAD
-(defclass pdb-entry ()
-  ((classification :initarg :classification :accessor classification :initform nil)
-   (dep-date :initarg :dep-date :accessor dep-date :initform nil)
-   (id-code :initarg :id-code :accessor id-code :initform nil)
-   (obsolete :initarg :obsolete :accessor obsolete :initform nil)
-   (title :initarg :title :accessor title :initform nil)
-   (resolution :initarg :resolution :accessor resolution :initform nil)
-   (molecules :initarg :molecules :accessor molecules :initform nil)
-   (chains :initarg :chains :accessor chains :initform nil)
-   (atom-hash :initarg :atom-hash :accessor atom-hash :initform (make-hash-table))
-   (sites :initarg :sites :accessor sites :initform nil)
-   (helices :initarg :helices :accessor helices :initform nil)
-   (sheets :initarg :sheets :accessor sheets :initform nil)
-   (cispeps :initarg :cispeps :accessor cispeps :initform nil)
-   (ssbonds :initarg :ssbonds :accessor ssbonds :initform nil)
-   (links :initarg :links :accessor links :initform nil)))
-
-(defclass pdb-molecule ()
-  ((id :initarg :id :accessor :id)
-   (name :initarg :name :accessor name)
-   (chains :initarg :chains :accessor chains)
-   (fragments :initarg :fragments :accessor fragments)
-   (synonym :initarg :synonym :accessor synonym)
-   (ec :initarg :ec :accessor ec)
-   (engineered :initarg :engineered :accessor engineered)
-   (mutation :initarg :mutation :accessor mutation)
-   (other-details :initarg :other-details :accessor other-details)))
-
-(defclass pdb-chain ()
-  ((name :initarg :name :accessor name)
-   (sequence :initarg :sequence :accessor chain-sequence)))
-
-(defclass pdb-record ()
-  ((record-name :reader record-name :allocation class)
-   (continuable :initarg :continuable :accessor continuable
-                :initform nil))
-  (:documentation "class for holding information about pdb-records
-  while parsing PDB files."))
-
-(defclass continuable-pdb-record (pdb-record)
-  ((continuable :initarg :continuable :accessor continuable
-                :initform t)
-   (continuation-columns :initarg :continuation-columns
-                         :accessor continuation-columns
-                         :initform '(8 10))
-   (field-columns :initarg :field-columns
-                  :accessor field-columns
-                  :initform '(10 80))
-   (lines :initarg :lines :accessor lines :initform nil)
-   (data :initarg :data :accessor data :initform nil))
-  (:documentation "subclass of pdb-record for holding information
-  about contiuable pdb-records for use while parsing PDB files."))
-
-=======
->>>>>>> origin/master
 (defgeneric start-pdb-record (record-name line &key entry)
   (:documentation "Reads the first line of a PDB record"))
 
