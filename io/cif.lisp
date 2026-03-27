@@ -499,20 +499,46 @@
           do (let* ((parser-symbol (gethash header *cif-type-hash*))
                     ;; Dispatch to the correct high-speed Lisp parser
                     (parsed-val (cond
-                                  ((eq parser-symbol 'strict-pdb-int)
-                                   (strict-pdb-int val 0 (length val)))
-                                  ((eq parser-symbol 'strict-pdb-float)
-                                   (strict-pdb-float val 0 (length val)))
-                                  ((eq parser-symbol 'fast-pdb-symbol)
-                                   (fast-pdb-symbol val 0 (length val)))
-                                  ;; Fallback to the raw string if type is 'identity or unknown
+                                  ;; 1. Handle parsers that require start/end bounds (The perf optimization)
+                                  ((member parser-symbol '(strict-pdb-int strict-pdb-float fast-pdb-symbol))
+                                   (funcall parser-symbol val 0 (length val)))
+                                  ;; 2. Handle dynamic dictionary parsers (parse-cif-float, parse-range, parse-3x4-matrix)
+                                  (parser-symbol
+                                   (funcall parser-symbol val))
+                                  ;; 3. Fallback identity
                                   (t val))))
                
-               ;; Intern the header as a keyword (e.g., :|_struct_title.title|) and pair it
+               ;; Intern the header as a keyword and pair it
                (push (cons (intern (string-upcase header) :keyword) parsed-val) parsed-row)))
     
     ;; Reverse to maintain the original column order
     (nreverse parsed-row)))
+
+;; (defun process-dynamic-row (headers row-values)
+;;   "Dynamically parses a row of mmCIF values using the compiled type dictionary.
+;;    Returns an alist of typed keyword-value pairs."
+;;   (let ((parsed-row nil))
+;;     (loop for header in headers
+;;           for val in row-values
+;;           ;; Skip mmCIF missing value indicators
+;;           unless (or (string= val ".") (string= val "?"))
+;;           do (let* ((parser-symbol (gethash header *cif-type-hash*))
+;;                     ;; Dispatch to the correct high-speed Lisp parser
+;;                     (parsed-val (cond
+;;                                   ((eq parser-symbol 'strict-pdb-int)
+;;                                    (strict-pdb-int val 0 (length val)))
+;;                                   ((eq parser-symbol 'strict-pdb-float)
+;;                                    (strict-pdb-float val 0 (length val)))
+;;                                   ((eq parser-symbol 'fast-pdb-symbol)
+;;                                    (fast-pdb-symbol val 0 (length val)))
+;;                                   ;; Fallback to the raw string if type is 'identity or unknown
+;;                                   (t val))))
+;;                
+;;                ;; Intern the header as a keyword (e.g., :|_struct_title.title|) and pair it
+;;                (push (cons (intern (string-upcase header) :keyword) parsed-val) parsed-row)))
+;;     
+;;     ;; Reverse to maintain the original column order
+;;     (nreverse parsed-row)))
 
 (defun process-atom-site-row (headers row-values entry)
   "Maps a row of mmCIF _atom_site values to our legacy pdb-atom struct."
@@ -604,10 +630,11 @@
                       (unless (or (string= val ".") (string= val "?"))
                         (let* ((parser-symbol (gethash tag *cif-type-hash*))
                                (parsed-val (cond
-                                             ((eq parser-symbol 'strict-pdb-int) (strict-pdb-int val 0 (length val)))
-                                             ((eq parser-symbol 'strict-pdb-float) (strict-pdb-float val 0 (length val)))
-                                             ((eq parser-symbol 'fast-pdb-symbol) (fast-pdb-symbol val 0 (length val)))
-                                             (t val))))
+                                  ((member parser-symbol '(strict-pdb-int strict-pdb-float fast-pdb-symbol))
+                                   (funcall parser-symbol val 0 (length val)))
+                                  (parser-symbol
+                                   (funcall parser-symbol val))
+                                  (t val))))
                           (setf (gethash (intern (string-upcase tag) :keyword) (cif-metadata entry)) parsed-val))))
                     (setf current-token (get-cif-token stream nil nil)))))
                
@@ -757,24 +784,26 @@
     atoms))
 
 (defun populate-legacy-connections (entry meta)
-  "Extracts SSBOND and LINK records from mmCIF _struct_conn."
+  "Extracts SSBOND and LINK records from mmCIF _struct_conn with strict type enforcement."
   (loop for row in (gethash :|_STRUCT_CONN| meta)
-        for conn-type = (cdr (assoc :|_STRUCT_CONN.CONN_TYPE_ID| row))
-        do (let ((res-1   (cdr (assoc :|_STRUCT_CONN.PTNR1_LABEL_COMP_ID| row)))
-                 (chain-1 (cdr (assoc :|_STRUCT_CONN.PTNR1_LABEL_ASYM_ID| row)))
-                 (seq-1   (or (cdr (assoc :|_STRUCT_CONN.PTNR1_LABEL_SEQ_ID| row)) 0))
-                 (icode-1 (cdr (assoc :|_STRUCT_CONN.PDBX_PTNR1_PDB_INS_CODE| row)))
-                 (atom-1  (cdr (assoc :|_STRUCT_CONN.PTNR1_LABEL_ATOM_ID| row)))
-                 (sym-1   (cdr (assoc :|_STRUCT_CONN.PTNR1_SYMMETRY| row)))
+        for conn-type = (cif-sym row :|_STRUCT_CONN.CONN_TYPE_ID|)
+        do (let ((res-1   (cif-sym row :|_STRUCT_CONN.PTNR1_LABEL_COMP_ID|))
+                 (chain-1 (cif-sym row :|_STRUCT_CONN.PTNR1_LABEL_ASYM_ID|))
+                 (seq-1   (cif-int row :|_STRUCT_CONN.PTNR1_LABEL_SEQ_ID|))
+                 (icode-1 (cif-sym row :|_STRUCT_CONN.PDBX_PTNR1_PDB_INS_CODE|))
+                 (atom-1  (cif-sym row :|_STRUCT_CONN.PTNR1_LABEL_ATOM_ID|))
+                 (sym-1   (cif-str row :|_STRUCT_CONN.PTNR1_SYMMETRY|))
+                 (alt-1   (cif-sym row :|_STRUCT_CONN.PTNR1_LABEL_ALT_ID|))
                  
-                 (res-2   (cdr (assoc :|_STRUCT_CONN.PTNR2_LABEL_COMP_ID| row)))
-                 (chain-2 (cdr (assoc :|_STRUCT_CONN.PTNR2_LABEL_ASYM_ID| row)))
-                 (seq-2   (or (cdr (assoc :|_STRUCT_CONN.PTNR2_LABEL_SEQ_ID| row)) 0))
-                 (icode-2 (cdr (assoc :|_STRUCT_CONN.PDBX_PTNR2_PDB_INS_CODE| row)))
-                 (atom-2  (cdr (assoc :|_STRUCT_CONN.PTNR2_LABEL_ATOM_ID| row)))
-                 (sym-2   (cdr (assoc :|_STRUCT_CONN.PTNR2_SYMMETRY| row)))
+                 (res-2   (cif-sym row :|_STRUCT_CONN.PTNR2_LABEL_COMP_ID|))
+                 (chain-2 (cif-sym row :|_STRUCT_CONN.PTNR2_LABEL_ASYM_ID|))
+                 (seq-2   (cif-int row :|_STRUCT_CONN.PTNR2_LABEL_SEQ_ID|))
+                 (icode-2 (cif-sym row :|_STRUCT_CONN.PDBX_PTNR2_PDB_INS_CODE|))
+                 (atom-2  (cif-sym row :|_STRUCT_CONN.PTNR2_LABEL_ATOM_ID|))
+                 (sym-2   (cif-str row :|_STRUCT_CONN.PTNR2_SYMMETRY|))
+                 (alt-2   (cif-sym row :|_STRUCT_CONN.PTNR2_LABEL_ALT_ID|))
                  
-                 (length  (or (cdr (assoc :|_STRUCT_CONN.PDBX_DIST_VALUE| row)) 0.0d0)))
+                 (length  (cif-float row :|_STRUCT_CONN.PDBX_DIST_VALUE|)))
              (cond
                ((eq conn-type :|disulf|)
                 (push (make-pdb-ssbond
@@ -792,9 +821,11 @@
                        :length    (cif-float row :|_STRUCT_CONN.CONN_TYPE_ID_DIST|))
                       (ssbonds entry)))
                (conn-type
-                (push (make-pdb-link :res-name-1 res-1 :chain-1 chain-1 :seq-num-1 seq-1 :icode-1 icode-1 :atom-1 atom-1
-                                     :res-name-2 res-2 :chain-2 chain-2 :seq-num-2 seq-2 :icode-2 icode-2 :atom-2 atom-2
-                                     :sym-1 sym-1 :sym-2 sym-2 :length length)
+                (push (make-pdb-link :atom1 atom-1 :alt-loc1 alt-1 
+                                     :res-name1 res-1 :chain-id1 chain-1 :seq-num1 seq-1 :icode1 icode-1
+                                     :atom2 atom-2 :alt-loc2 alt-2 
+                                     :res-name2 res-2 :chain-id2 chain-2 :seq-num2 seq-2 :icode2 icode-2
+                                     :sym1 sym-1 :sym2 sym-2 :length length)
                       (links entry))))))
   (setf (ssbonds entry) (nreverse (ssbonds entry))
         (links entry)   (nreverse (links entry))))

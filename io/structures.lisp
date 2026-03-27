@@ -13,6 +13,7 @@
    (dep-date :initarg :dep-date :accessor dep-date :initform nil)
    (id-code :initarg :id-code :accessor id-code :initform nil)
    (obsolete :initarg :obsolete :accessor obsolete :initform nil)
+   (resolution :initarg :resolution :accessor resolution :initform nil)
    (title :initarg :title :accessor title :initform nil)
    (molecules :initarg :molecules :accessor molecules :initform nil)
    (chains :initarg :chains :accessor chains :initform nil)
