@@ -104,7 +104,7 @@
 (defun cif-sym (alist key &optional default)
   "Extracts a CIF value and guarantees a KEYWORD SYMBOL."
   (let ((val (cdr (assoc key alist))))
-    (values ;; Explicitly strip the secondary status value returned by 'intern'
+    (values
      (cond ((keywordp val) val)
            ((symbolp val) (intern (string val) "KEYWORD"))
            ((stringp val) (intern val "KEYWORD"))
@@ -128,20 +128,16 @@
    Returns (values float-value float-uncertainty)."
   (when (or (string= str "?") (string= str "."))
     (return-from parse-cif-number (values nil nil)))
-  
   (let* ((e-pos (position-if (lambda (c) (member c '(#\e #\E))) str))
          (exp-val (if e-pos (or (parse-integer (subseq str (1+ e-pos)) :junk-allowed t) 0) 0))
          (base-str (if e-pos (subseq str 0 e-pos) str))
          (paren-pos (position #\( base-str))
          (val-str (if paren-pos (subseq base-str 0 paren-pos) base-str))
          (unc-str (when paren-pos (subseq base-str (1+ paren-pos) (position #\) base-str))))
-         ;; SAFETY ADDED HERE
          (parsed-val (let ((*read-default-float-format* 'double-float))
                        (ignore-errors (read-from-string val-str)))))
-    
     (unless (numberp parsed-val)
       (return-from parse-cif-number (values nil nil)))
-      
     (let ((val-float (coerce parsed-val 'double-float)))
       (values
        (* val-float (expt 10.0d0 exp-val))
@@ -163,16 +159,11 @@
         (start 0)
         (len (length str)))
     (loop
-      ;; Find the start of the next word
       (let ((s (position-if-not (lambda (c) (member c '(#\Space #\Tab #\Newline #\Return))) str :start start)))
-        (unless s (return (nreverse tokens))) ;; No more words? We're done.
-        
-        ;; Find the end of the word
+        (unless s (return (nreverse tokens)))
         (let ((e (position-if (lambda (c) (member c '(#\Space #\Tab #\Newline #\Return))) str :start s)))
           (push (subseq str s (or e len)) tokens)
-          (unless e (return (nreverse tokens))) ;; Reached the end of the string? We're done.
-          
-          ;; Advance the pointer
+          (unless e (return (nreverse tokens)))
           (setf start e))))))
 
 (defun parse-range (str)
@@ -229,49 +220,35 @@
   (reset-cif-buffer)
   (let ((char (read-char stream eof-error-p eof-value))
         (at-line-start t))
-    
     (loop
       (cond
-        ;; 1. Handle EOF
         ((eql char eof-value)
          (return (cons :EOF nil)))
-        
-        ;; 2. Skip Comments (everything after '#' until a newline)
         ((char= char #\#)
          (loop for c = (read-char stream nil nil)
                until (or (null c) (char= c #\Newline)))
          (setf char (read-char stream eof-error-p eof-value)
                at-line-start t))
-        
-        ;; 3. Skip Whitespace
         ((member char '(#\Space #\Tab #\Newline #\Return))
          (when (char= char #\Newline)
            (setf at-line-start t))
          (setf char (read-char stream eof-error-p eof-value)))
-
-        ;; 4. Multi-line Text Blocks (Semicolon at start of line)
         ((and at-line-start (char= char #\;))
          (return (cons :VALUE (read-cif-text-block stream))))
-        
-        ;; 5. Quoted Strings (Single or Double)
         ((or (char= char #\') (char= char #\"))
          (let ((quote-char char))
            (loop for c = (read-char stream eof-error-p eof-value)
                  until (or (eql c eof-value) (char= c quote-char))
                  do (push-cif-char c))
            (return (cons :VALUE (copy-seq *cif-buffer*)))))
-        
-        ;; 6. Standard Unquoted Tokens (Tags, Values, loop_, data_)
         (t
          (push-cif-char char)
          (loop for c = (peek-char nil stream nil nil)
                while (and c (not (member c '(#\Space #\Tab #\Newline #\Return))))
                do (push-cif-char (read-char stream nil nil)))
-         
          (let ((token-str (copy-seq *cif-buffer*)))
            (return 
              (cond
-               ;; ADD THIS NEW BLOCK HERE:
                ((and (>= (length token-str) 5) 
                      (string-equal (subseq token-str 0 5) "save_"))
                 (cons :SAVE token-str))
@@ -306,39 +283,27 @@
    Keys are tags (strings), values are lists of string values."
   (let ((cif-data (make-hash-table :test 'equal))
         (current-token (get-cif-token stream nil nil)))
-
     (loop while (and current-token (not (eq (car current-token) :EOF)))
           do (case (car current-token)
-
-               ;; 1. Flat Tag-Value Pair
                (:TAG
                 (let ((tag (cdr current-token)))
                   (setf current-token (get-cif-token stream nil nil))
                   (when (eq (car current-token) :VALUE)
                     (push (cdr current-token) (gethash tag cif-data))
                     (setf current-token (get-cif-token stream nil nil)))))
-
-               ;; 2. Loop Block
                (:LOOP
                 (let ((headers nil))
                   (setf current-token (get-cif-token stream nil nil))
-                  ;; Gather all headers
                   (loop while (eq (car current-token) :TAG)
                         do (push (cdr current-token) headers)
                            (setf current-token (get-cif-token stream nil nil)))
                   (setf headers (nreverse headers))
-
-                  ;; Read values and assign them to the correct column (header)
                   (loop while (eq (car current-token) :VALUE)
                         do (loop for header in headers
                                  do (when (eq (car current-token) :VALUE)
                                       (push (cdr current-token) (gethash header cif-data))
                                       (setf current-token (get-cif-token stream nil nil)))))))
-
-               ;; 3. Ignore DATA blocks or unhandled tokens
                (t (setf current-token (get-cif-token stream nil nil)))))
-
-    ;; Reverse the lists in the hash table so they match the original file order
     (maphash (lambda (k v)
                (setf (gethash k cif-data) (nreverse v)))
              cif-data)
@@ -354,12 +319,10 @@
         (parent-links   (make-hash-table :test 'equalp))
         (current-names nil) (current-type nil)
         (current-child nil) (current-parent nil))
-    
     (with-open-file (stream dictionary-file :direction :input)
       (let ((token (get-cif-token stream nil nil)))
         (loop while (and token (not (eq (car token) :EOF)))
               do (case (car token)
-                   
                    (:SAVE
                     (when current-type
                       (dolist (name current-names)
@@ -368,7 +331,6 @@
                       (setf (gethash current-child parent-links) current-parent))
                     (setf current-names nil current-type nil current-child nil current-parent nil)
                     (setf token (get-cif-token stream nil nil)))
-
                    (:TAG
                     (let ((tag (cdr token)))
                       (setf token (get-cif-token stream nil nil))
@@ -384,7 +346,6 @@
                                  (string-equal tag "_pdbx_item_linked_group_list.parent_name"))
                              (setf current-parent val))))
                         (setf token (get-cif-token stream nil nil)))))
-                   
                    (:LOOP
                     (let ((headers nil))
                       (setf token (get-cif-token stream nil nil))
@@ -392,21 +353,17 @@
                             do (push (cdr token) headers)
                                (setf token (get-cif-token stream nil nil)))
                       (setf headers (nreverse headers))
-                      
                       (let ((child-idx (or (position "_item_linked.child_name" headers :test #'string-equal)
                                            (position "_pdbx_item_linked_group_list.child_name" headers :test #'string-equal)))
                             (parent-idx (or (position "_item_linked.parent_name" headers :test #'string-equal)
                                             (position "_pdbx_item_linked_group_list.parent_name" headers :test #'string-equal)))
                             (name-idx (position "_item.name" headers :test #'string-equal))
                             (type-idx (position "_item_type.code" headers :test #'string-equal)))
-                        
                         (loop while (eq (car token) :VALUE)
                               do (let ((row (make-array (length headers))))
                                    (loop for i from 0 below (length headers)
                                          do (setf (aref row i) (fast-cif-trim *cif-trim-bag* (cdr token)))
                                             (setf token (get-cif-token stream nil nil)))
-                                   
-                                   ;; THE FIX: Isolate row types from frame types
                                    (if type-idx
                                        (when name-idx
                                          (setf (gethash (aref row name-idx) explicit-types) (aref row type-idx)))
@@ -442,36 +399,20 @@
 (defun map-code-to-parser (code)
   "Maps the complete mmcif_pdbx.dic type codes to strict cl-bio parsers."
   (cond
-    ;; --- BOOLEANS ---
     ((string-equal code "boolean") 'parse-cif-boolean)
-
-    ;; --- INTEGERS ---
     ((member code '("int" "positive_int") :test #'string-equal) 
      'strict-pdb-int)
-
-    ;; --- FLOATS (Cons cell of value . uncertainty) ---
     ((string-equal code "float") 'parse-cif-float)
-
-    ;; --- RANGES (Cons cells of min . max) ---
     ((member code '("int-range" "float-range") :test #'string-equal) 
      'parse-range)
-
-    ;; --- MATRICES (Cons cell of array . array) ---
     ((string-equal code "3x4_matrix") 'parse-3x4-matrix)
     ((string-equal code "3x4_matrices") 'parse-3x4-matrices)
-
-    ;; --- SYMBOLS (Fast EQ lookups for identifiers/codes) ---
-    ;; We use symbols here because these fields have a strictly limited vocabulary,
-    ;; and symbol comparison is O(1) inside struct logic.
     ((member code '("asym_id" "atcode" "code" "code30" "ec-type" "emd_id" 
                     "idname" "name" "pdb_id" "pdb_id_u" "point_group" 
                     "point_group_helical" "point_symmetry" "symop" 
                     "uchar1" "uchar3" "uchar5" "ucode" "uniprot_ptm_id") 
              :test #'string-equal) 
      'fast-pdb-symbol)
-
-    ;; --- STRINGS (Identity fallback to prevent memory/symbol bloat) ---
-    ;; Used for unbounded text, lists, dates, and sequences.
     ((member code '("any" "author" "binary" "citation_doi" "date_dep" 
                     "deposition_email" "email" "entity_id_list" "exp_data_doi" 
                     "fax" "id_list" "id_list_spc" "int_list" "line" 
@@ -482,8 +423,6 @@
                     "yyyy-mm-dd:hh:mm" "yyyy-mm-dd:hh:mm-flex") 
              :test #'string-equal)
      'identity)
-
-    ;; --- FALLBACK TRIPWIRE ---
     (t 
      (format t "[WARNING] Unknown dictionary type code '~A' defaulting to IDENTITY.~%" code)
      'identity)))
@@ -494,55 +433,21 @@
   (let ((parsed-row nil))
     (loop for header in headers
           for val in row-values
-          ;; Skip mmCIF missing value indicators
-          unless (or (string= val ".") (string= val "?"))
-          do (let* ((parser-symbol (gethash header *cif-type-hash*))
-                    ;; Dispatch to the correct high-speed Lisp parser
-                    (parsed-val (cond
-                                  ;; 1. Handle parsers that require start/end bounds (The perf optimization)
-                                  ((member parser-symbol '(strict-pdb-int strict-pdb-float fast-pdb-symbol))
-                                   (funcall parser-symbol val 0 (length val)))
-                                  ;; 2. Handle dynamic dictionary parsers (parse-cif-float, parse-range, parse-3x4-matrix)
-                                  (parser-symbol
-                                   (funcall parser-symbol val))
-                                  ;; 3. Fallback identity
-                                  (t val))))
-               
-               ;; Intern the header as a keyword and pair it
-               (push (cons (intern (string-upcase header) :keyword) parsed-val) parsed-row)))
-    
-    ;; Reverse to maintain the original column order
+          unless (or (string= val ".") (string= val "?")) do
+            (let* ((parser-symbol (gethash header *cif-type-hash*))
+                   (parsed-val (cond
+                                 ((member parser-symbol '(strict-pdb-int strict-pdb-float fast-pdb-symbol))
+                                  (funcall parser-symbol val 0 (length val)))
+                                 (parser-symbol
+                                  (funcall parser-symbol val))
+                                 (t val))))
+              (push (cons (intern (string-upcase header) :keyword) parsed-val) parsed-row)))
     (nreverse parsed-row)))
-
-;; (defun process-dynamic-row (headers row-values)
-;;   "Dynamically parses a row of mmCIF values using the compiled type dictionary.
-;;    Returns an alist of typed keyword-value pairs."
-;;   (let ((parsed-row nil))
-;;     (loop for header in headers
-;;           for val in row-values
-;;           ;; Skip mmCIF missing value indicators
-;;           unless (or (string= val ".") (string= val "?"))
-;;           do (let* ((parser-symbol (gethash header *cif-type-hash*))
-;;                     ;; Dispatch to the correct high-speed Lisp parser
-;;                     (parsed-val (cond
-;;                                   ((eq parser-symbol 'strict-pdb-int)
-;;                                    (strict-pdb-int val 0 (length val)))
-;;                                   ((eq parser-symbol 'strict-pdb-float)
-;;                                    (strict-pdb-float val 0 (length val)))
-;;                                   ((eq parser-symbol 'fast-pdb-symbol)
-;;                                    (fast-pdb-symbol val 0 (length val)))
-;;                                   ;; Fallback to the raw string if type is 'identity or unknown
-;;                                   (t val))))
-;;                
-;;                ;; Intern the header as a keyword (e.g., :|_struct_title.title|) and pair it
-;;                (push (cons (intern (string-upcase header) :keyword) parsed-val) parsed-row)))
-;;     
-;;     ;; Reverse to maintain the original column order
-;;     (nreverse parsed-row)))
 
 (defun process-atom-site-row (headers row-values entry)
   "Maps a row of mmCIF _atom_site values to our legacy pdb-atom struct."
   (let ((atom-number 0)
+        (rec-name :ATOM)
         (atom-name nil)
         (alt-loc nil)
         (residue-name nil)
@@ -556,25 +461,37 @@
         (temp-factor 0.0d0)
         (element-symbol nil)
         (charge nil)
-        (valid-p nil)) ; Flag to ensure we actually parsed an atom ID
-        
+        (model-num 1)
+        (valid-p nil))
     (loop for header in headers
           for val in row-values
-          ;; Skip mmCIF null indicators
           unless (or (string= val ".") (string= val "?"))
           do (cond
+               ((string-equal header "_atom_site.pdbx_PDB_model_num")
+                (let ((parsed (parse-integer val :junk-allowed t)))
+                  (when parsed (setf model-num parsed))))
+               ((string-equal header "_atom_site.group_PDB")
+                (setf rec-name (intern val :keyword)))
                ((string-equal header "_atom_site.id")
-                (setf atom-number (parse-integer val) valid-p t))
-               ((string-equal header "_atom_site.label_atom_id")
+                (setf atom-number (parse-integer val :junk-allowed t) valid-p t))
+               ((string-equal header "_atom_site.auth_atom_id")
                 (setf atom-name (intern val :keyword)))
+               ((and (null atom-name) (string-equal header "_atom_site.label_atom_id"))
+                (setf atom-name (intern val :keyword)))
+               ((string-equal header "_atom_site.auth_comp_id")
+                (setf residue-name (intern val :keyword)))
+               ((and (null residue-name) (string-equal header "_atom_site.label_comp_id"))
+                (setf residue-name (intern val :keyword)))
+               ((string-equal header "_atom_site.auth_asym_id")
+                (setf chain-id (intern val :keyword)))
+               ((and (null chain-id) (string-equal header "_atom_site.label_asym_id"))
+                (setf chain-id (intern val :keyword)))
+               ((string-equal header "_atom_site.auth_seq_id")
+                (setf residue-seq-number (parse-integer val :junk-allowed t)))
+               ((and (zerop residue-seq-number) (string-equal header "_atom_site.label_seq_id"))
+                (setf residue-seq-number (parse-integer val :junk-allowed t)))
                ((string-equal header "_atom_site.label_alt_id")
                 (setf alt-loc (intern val :keyword)))
-               ((string-equal header "_atom_site.label_comp_id")
-                (setf residue-name (intern val :keyword)))
-               ((string-equal header "_atom_site.label_asym_id")
-                (setf chain-id (intern val :keyword)))
-               ((string-equal header "_atom_site.label_seq_id")
-                (setf residue-seq-number (parse-integer val)))
                ((string-equal header "_atom_site.pdbx_PDB_ins_code")
                 (setf insertion-code (intern val :keyword)))
                ((string-equal header "_atom_site.Cartn_x")
@@ -590,26 +507,27 @@
                ((string-equal header "_atom_site.type_symbol")
                 (setf element-symbol (intern val :keyword)))
                ((string-equal header "_atom_site.pdbx_formal_charge")
-                (setf charge (parse-integer val)))))
-    
-    ;; Only store if it successfully parsed a valid ID
-    (when valid-p
-      (let ((atom (make-pdb-atom :rec-name :ATOM
-                                 :atom-number atom-number
-                                 :atom-name atom-name
-                                 :alt-loc alt-loc
-                                 :residue-name residue-name
-                                 :chain-id chain-id
-                                 :residue-seq-number residue-seq-number
-                                 :insertion-code insertion-code
-                                 :x-coord x-coord
-                                 :y-coord y-coord
-                                 :z-coord z-coord
-                                 :occupancy occupancy
-                                 :temp-factor temp-factor
-                                 :element-symbol element-symbol
-                                 :charge charge)))
-        (setf (gethash atom-number (atom-hash entry)) atom)))))
+                (setf charge (parse-integer val :junk-allowed t)))))
+    (when (and valid-p (= model-num 1))
+      (let ((final-res-seq (if (zerop residue-seq-number)
+                               atom-number
+                               residue-seq-number)))
+        (let ((atom (make-pdb-atom :rec-name rec-name
+                                   :atom-number atom-number
+                                   :atom-name atom-name
+                                   :alt-loc alt-loc
+                                   :residue-name residue-name
+                                   :chain-id chain-id
+                                   :residue-seq-number final-res-seq
+                                   :insertion-code insertion-code
+                                   :x-coord x-coord
+                                   :y-coord y-coord
+                                   :z-coord z-coord
+                                   :occupancy occupancy
+                                   :temp-factor temp-factor
+                                   :element-symbol element-symbol
+                                   :charge charge)))
+           (setf (gethash atom-number (atom-hash entry)) atom))))))
 
 (defun read-cif-stream (stream &key (populate-legacy t))
   "The streamlined state machine: fast-paths atoms, dynamically catches everything else,
@@ -783,6 +701,31 @@
     (format t "-> Fast-tracked ~D atoms directly to hash!~%" atom-count)
     atoms))
 
+(defun populate-legacy-metadata (entry meta)
+  "Strictly typed metadata extraction relying exclusively on dictionary compilation."
+  (let ((id (or (gethash :|_ENTRY.ID| meta)
+                (cdr (assoc :|_ENTRY.ID| (first (gethash :|_ENTRY| meta)))))))
+    (when id (setf (id-code entry) (string id))))
+  (let ((title (or (gethash :|_STRUCT.TITLE| meta)
+                   (cdr (assoc :|_STRUCT.TITLE| (first (gethash :|_STRUCT| meta)))))))
+    (when (stringp title) (setf (title entry) title)))
+  (let ((res (or (gethash :|_REFLNS.D_RESOLUTION_HIGH| meta)
+                 (cdr (assoc :|_REFLNS.D_RESOLUTION_HIGH| (first (gethash :|_REFLNS| meta))))
+                 (gethash :|_REFINE.LS_D_RES_HIGH| meta)
+                 (cdr (assoc :|_REFINE.LS_D_RES_HIGH| (first (gethash :|_REFINE| meta)))))))
+    (when (consp res) 
+      (setf (resolution entry) (car res))))
+  (let ((dep (or (gethash :|_PDBX_DATABASE_STATUS.RECVD_INITIAL_DEPOSITION_DATE| meta)
+                 (cdr (assoc :|_PDBX_DATABASE_STATUS.RECVD_INITIAL_DEPOSITION_DATE| (first (gethash :|_PDBX_DATABASE_STATUS| meta)))))))
+    (when (stringp dep) (setf (dep-date entry) dep)))
+  (let ((cls (or (gethash :|_STRUCT_KEYWORDS.PDBX_KEYWORDS| meta)
+                 (cdr (assoc :|_STRUCT_KEYWORDS.PDBX_KEYWORDS| (first (gethash :|_STRUCT_KEYWORDS| meta)))))))
+    (when (stringp cls) (setf (classification entry) cls)))
+  (let ((obs (or (gethash :|_PDBX_DATABASE_PDB_OBS_SPR.ID| meta)
+                 (first (gethash :|_PDBX_DATABASE_PDB_OBS_SPR| meta)))))
+    (when obs (setf (obsolete entry) t)))
+  (setf (struct-conns entry) (gethash :|_STRUCT_CONN| meta)))
+
 (defun populate-legacy-connections (entry meta)
   "Extracts SSBOND and LINK records from mmCIF _struct_conn with strict type enforcement."
   (loop for row in (gethash :|_STRUCT_CONN| meta)
@@ -805,7 +748,7 @@
                  
                  (length  (cif-float row :|_STRUCT_CONN.PDBX_DIST_VALUE|)))
              (cond
-               ((eq conn-type :|disulf|)
+               ((eq conn-type :disulf)
                 (push (make-pdb-ssbond
                        :ser-num   (cif-int row :|_STRUCT_CONN.ID|)
                        :res-name1 (cif-sym row :|_STRUCT_CONN.PTNR1_AUTH_COMP_ID|)
@@ -831,42 +774,73 @@
         (links entry)   (nreverse (links entry))))
 
 (defun populate-legacy-helices (entry meta)
-  "Extracts HELIX records from mmCIF _struct_conf."
-  (loop for row in (gethash :|_STRUCT_CONF| meta)
-        for conf-type = (string (cdr (assoc :|_STRUCT_CONF.CONF_TYPE_ID| row)))
-        when (and (>= (length conf-type) 4) (string-equal (subseq conf-type 0 4) "HELX"))
-          do (push (make-pdb-helix
-                    :ser-num       (cif-int row :|_STRUCT_CONF.ID|)
-                    :helix-id      (cif-sym row :|_STRUCT_CONF.PDBX_PDB_HELIX_ID|)
-                    :init-res-name (cif-sym row :|_STRUCT_CONF.BEG_AUTH_COMP_ID|)
-                    :init-chain-id (cif-sym row :|_STRUCT_CONF.BEG_AUTH_ASYM_ID|)
-                    :init-seq-num  (cif-int row :|_STRUCT_CONF.BEG_AUTH_SEQ_ID|)
-                    :init-icode    (cif-sym row :|_STRUCT_CONF.PDBX_BEG_PDB_INS_CODE|)
-                    :end-res-name  (cif-sym row :|_STRUCT_CONF.END_AUTH_COMP_ID|)
-                    :end-chain-id  (cif-sym row :|_STRUCT_CONF.END_AUTH_ASYM_ID|)
-                    :end-seq-num   (cif-int row :|_STRUCT_CONF.END_AUTH_SEQ_ID|)
-                    :end-icode     (cif-sym row :|_STRUCT_CONF.PDBX_END_PDB_INS_CODE|)
-                    :helix-class   (cif-int row :|_STRUCT_CONF.PDBX_PDB_HELIX_CLASS|)
-                    :comment       (cif-str row :|_STRUCT_CONF.DETAILS|)
-                    :length        (cif-int row :|_STRUCT_CONF.PDBX_PDB_HELIX_LENGTH|))
-                   (helices entry)))
-  (setf (helices entry) (nreverse (helices entry))))
+  "Extracts HELIX records from mmCIF _struct_conf with safe serial numbering."
+  (let ((ser-num-counter 1))
+    (loop for row in (gethash :|_STRUCT_CONF| meta)
+          for conf-type = (string (cdr (assoc :|_STRUCT_CONF.CONF_TYPE_ID| row)))
+          when (and (>= (length conf-type) 4) (string-equal (subseq conf-type 0 4) "HELX"))
+            do (push (make-pdb-helix
+                      :ser-num       ser-num-counter
+                      :helix-id      (cif-sym row :|_STRUCT_CONF.PDBX_PDB_HELIX_ID|)
+                      :init-res-name (cif-sym row :|_STRUCT_CONF.BEG_AUTH_COMP_ID|)
+                      :init-chain-id (cif-sym row :|_STRUCT_CONF.BEG_AUTH_ASYM_ID|)
+                      :init-seq-num  (cif-int row :|_STRUCT_CONF.BEG_AUTH_SEQ_ID|)
+                      :init-icode    (cif-sym row :|_STRUCT_CONF.PDBX_BEG_PDB_INS_CODE|)
+                      :end-res-name  (cif-sym row :|_STRUCT_CONF.END_AUTH_COMP_ID|)
+                      :end-chain-id  (cif-sym row :|_STRUCT_CONF.END_AUTH_ASYM_ID|)
+                      :end-seq-num   (cif-int row :|_STRUCT_CONF.END_AUTH_SEQ_ID|)
+                      :end-icode     (cif-sym row :|_STRUCT_CONF.PDBX_END_PDB_INS_CODE|)
+                      :helix-class   (cif-int row :|_STRUCT_CONF.PDBX_PDB_HELIX_CLASS|)
+                      :comment       (cif-str row :|_STRUCT_CONF.DETAILS|)
+                      :length        (cif-int row :|_STRUCT_CONF.PDBX_PDB_HELIX_LENGTH|))
+                     (helices entry))
+               (incf ser-num-counter))
+    (setf (helices entry) (nreverse (helices entry)))))
+
+(defun populate-legacy-hierarchy (entry)
+  "Aggregates atoms into chains and molecules to satisfy legacy structural graph requirements.
+   Rebuilds the primary sequence directly from the 3D coordinate data."
+  (let ((chain-hash (make-hash-table :test 'eq))
+        (chain-seqs (make-hash-table :test 'eq)))
+    (maphash (lambda (atom-num atom)
+               (declare (ignore atom-num))
+               (let ((chain-id (chain-id atom))
+                     (res-seq  (residue-seq-number atom))
+                     (res-name (residue-name atom)))
+                 (unless (gethash chain-id chain-hash)
+                   (setf (gethash chain-id chain-hash) 
+                         (make-instance 'pdb-chain :name chain-id :sequence nil)))
+                 (pushnew (cons res-seq res-name) 
+                          (gethash chain-id chain-seqs) 
+                          :test #'equal)))
+             (atom-hash entry))
+    (let ((chain-list nil))
+      (maphash (lambda (chain-id chain-obj)
+                 (let* ((raw-seq    (gethash chain-id chain-seqs))
+                        (sorted-seq (sort raw-seq #'< :key #'car))
+                        (final-seq  (mapcar #'cdr sorted-seq)))
+                   (setf (chain-sequence chain-obj) final-seq)
+                   (push chain-obj chain-list)))
+               chain-hash)
+      (setf (chains entry) (sort chain-list #'string< :key #'name)))
+    (when (chains entry)
+      (setf (molecules entry)
+            (list (make-instance 'pdb-molecule
+                                 :id 1
+                                 :name (or (title entry) "mmCIF Extracted Molecule")
+                                 :chains (chains entry)))))))
 
 (defun populate-legacy-sheets (entry meta)
   "Extracts SHEET records by joining _struct_sheet_range with _struct_sheet_hbond."
   (let ((ranges (gethash :|_STRUCT_SHEET_RANGE| meta))
         (hbonds (gethash :|_STRUCT_SHEET_HBOND| meta)))
-    
     (loop for row in ranges
           for sheet-id = (cif-sym row :|_STRUCT_SHEET_RANGE.SHEET_ID|)
           for strand-id = (cif-sym row :|_STRUCT_SHEET_RANGE.ID|)
-          
-          ;; Perform a relational join: Find the H-bond row where this strand is "range 2"
           do (let ((hb-row (find-if (lambda (hb)
                                       (and (eq (cif-sym hb :|_STRUCT_SHEET_HBOND.SHEET_ID|) sheet-id)
                                            (eq (cif-sym hb :|_STRUCT_SHEET_HBOND.RANGE_ID_2|) strand-id)))
                                     hbonds)))
-               
                (push (make-pdb-sheet
                       :strand         (cif-int row :|_STRUCT_SHEET_RANGE.ID|)
                       :sheet-id       sheet-id
@@ -880,7 +854,6 @@
                       :end-seq-num    (cif-int row :|_STRUCT_SHEET_RANGE.END_AUTH_SEQ_ID|)
                       :end-icode      (cif-sym row :|_STRUCT_SHEET_RANGE.PDBX_END_PDB_INS_CODE|)
                       
-                      ;; Extract H-bond data if the join was successful
                       :cur-atom       (cif-sym hb-row :|_STRUCT_SHEET_HBOND.RANGE_1_AUTH_ATOM_ID|)
                       :cur-res-name   (cif-sym hb-row :|_STRUCT_SHEET_HBOND.RANGE_1_AUTH_COMP_ID|)
                       :cur-chain-id   (cif-sym hb-row :|_STRUCT_SHEET_HBOND.RANGE_1_AUTH_ASYM_ID|)
@@ -945,11 +918,13 @@
   "Master interpreter: reads dynamically parsed mmCIF metadata and delegates 
    to specific helpers to populate legacy PDB lists."
   (let ((meta (cif-metadata entry)))
+    (populate-legacy-metadata entry meta)
     (populate-legacy-connections entry meta)
     (populate-legacy-helices entry meta)
     (populate-legacy-sheets entry meta)
     (populate-legacy-sites entry meta)
     (populate-legacy-cispeps entry meta))
+  (populate-legacy-hierarchy entry)
   entry)
 
 (defun update-local-dictionary (dictionary-file &key (output-file "io/cif-dictionary.lisp"))
@@ -960,26 +935,19 @@
                             :direction :output 
                             :if-exists :supersede
                             :if-does-not-exist :create)
-      
-      ;; 1. Write the File Header
       (format stream ";;; -------------------------------------------------------------------------~%")
       (format stream ";;; THIS FILE IS AUTO-GENERATED BY CL-BIO.~%")
       (format stream ";;; DO NOT EDIT DIRECTLY.~%")
       (format stream ";;; -------------------------------------------------------------------------~%~%")
       (format stream "(in-package :bio)~%~%")
-      
-      ;; 2. Write the Alist Variable
       (format stream "(defparameter *cif-type-alist*~%")
       (format stream "  '(~%")
       (loop for (key . val) in alist
             do (format stream "    (\"~A\" . ~S)~%" key val))
       (format stream "   )~%")
       (format stream "  \"Raw association list mapping mmCIF keys to Lisp parser functions.\")~%~%")
-      
-      ;; 3. Write the Hash Table Generator for fast runtime lookups
       (format stream "(defvar *cif-type-hash* (make-hash-table :test 'equalp)~%")
       (format stream "  \"O(1) lookup table for mmCIF data types.\")~%~%")
       (format stream "(loop for (key . val) in *cif-type-alist*~%")
       (format stream "      do (setf (gethash key *cif-type-hash*) val))~%~%")
-      
       (format t "Successfully generated ~A with ~D type definitions!~%" output-file (length alist)))))
